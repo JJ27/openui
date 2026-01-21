@@ -48,11 +48,16 @@ export function AddAgentModal() {
         ? `${selectedAgent.command} ${commandArgs}`
         : selectedAgent.command;
 
-      // Create multiple agents in a grid
-      const GRID_COLS = 5;
+      // Create multiple agents in a horizontal row
       const SPACING_X = 220;
-      const SPACING_Y = 200;
-      const startNodeCount = nodes.length;
+
+      // Find the rightmost position of existing nodes to place new ones after
+      const maxX = nodes.length > 0
+        ? Math.max(...nodes.map(n => n.position.x)) + SPACING_X
+        : 100;
+      const startY = nodes.length > 0
+        ? Math.min(...nodes.filter(n => n.type === 'agent').map(n => n.position.y))
+        : 100;
 
       for (let i = 0; i < count; i++) {
         const nodeId = `node-${Date.now()}-${i}`;
@@ -75,10 +80,9 @@ export function AddAgentModal() {
 
         const { sessionId } = await res.json();
 
-        // Calculate position in grid
-        const totalIndex = startNodeCount + i;
-        const x = 100 + (totalIndex % GRID_COLS) * SPACING_X;
-        const y = 100 + Math.floor(totalIndex / GRID_COLS) * SPACING_Y;
+        // Place new agents in a row beside each other
+        const x = (nodes.length === 0 ? 100 : maxX) + (i * SPACING_X);
+        const y = startY || 100;
 
         addNode({
           id: nodeId,
