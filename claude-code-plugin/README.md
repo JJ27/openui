@@ -4,17 +4,9 @@ Reports Claude Code agent status to OpenUI in real-time for accurate status disp
 
 ## Installation
 
-### Option 1: Marketplace Install (Recommended)
+**Automatic:** OpenUI automatically pulls and installs this plugin when you run it. No manual installation required.
 
-In Claude Code, run:
-
-```
-/plugin marketplace add Fallomai/openui
-/plugin install openui-status@openui-plugins
-```
-
-### Option 2: Curl Install (Auto-loaded by OpenUI)
-
+**Manual (if needed):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin/install.sh | bash
 ```

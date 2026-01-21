@@ -126,22 +126,11 @@ claude --plugin-dir $(pwd)/claude-code-plugin
 - Bun 1.0+
 - One of: Claude Code, OpenCode, or Ralph Loop
 
-### Claude Code Plugin (Recommended)
+### Claude Code Plugin (Auto-installed)
 
-For accurate real-time status updates, install the OpenUI plugin for Claude Code.
+OpenUI automatically pulls and installs the Claude Code plugin when you run it for the first time. This enables precise status detection (Working, Using Tools, Idle, Waiting for Input) via Claude Code hooks instead of terminal output parsing.
 
-**Option 1: Marketplace (in Claude Code)**
-```
-/plugin marketplace add Fallomai/openui
-/plugin install openui-status@openui-plugins
-```
-
-**Option 2: Curl (auto-loaded by OpenUI)**
-```bash
-curl -fsSL https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin/install.sh | bash
-```
-
-This enables precise status detection (Working, Using Tools, Idle, Waiting for Input) via Claude Code hooks instead of terminal output parsing.
+No manual installation required - just run `openui` and the plugin is set up automatically.
 
 See [claude-code-plugin/README.md](./claude-code-plugin/README.md) for more details.
 
