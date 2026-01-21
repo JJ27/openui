@@ -6,6 +6,10 @@ import type { Session, ClaudeMetrics } from "../types";
 import { loadBuffer } from "./persistence";
 import { detectStatus } from "./statusDetector";
 
+const QUIET = !!process.env.OPENUI_QUIET;
+const log = QUIET ? () => {} : console.log.bind(console);
+const logError = QUIET ? () => {} : console.error.bind(console);
+
 // Get git branch for a directory
 function getGitBranch(cwd: string): string | null {
   try {
@@ -67,12 +71,12 @@ export function createWorktree(params: {
 
   // Check if worktree already exists
   if (existsSync(worktreePath)) {
-    console.log(`\x1b[38;5;141m[worktree]\x1b[0m Worktree already exists: ${worktreePath}`);
+    log(`\x1b[38;5;141m[worktree]\x1b[0m Worktree already exists: ${worktreePath}`);
     return { success: true, worktreePath };
   }
 
   // Fetch latest from remote first
-  console.log(`\x1b[38;5;141m[worktree]\x1b[0m Fetching from remote...`);
+  log(`\x1b[38;5;141m[worktree]\x1b[0m Fetching from remote...`);
   spawnSync(["git", "fetch", "origin"], { cwd: gitRoot, stdout: "pipe", stderr: "pipe" });
 
   // Check if branch exists locally or remotely
@@ -91,7 +95,7 @@ export function createWorktree(params: {
   let result;
   if (localBranch.exitCode === 0) {
     // Branch exists locally, just add worktree
-    console.log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree for existing branch: ${branchName}`);
+    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree for existing branch: ${branchName}`);
     result = spawnSync(["git", "worktree", "add", worktreePath, branchName], {
       cwd: gitRoot,
       stdout: "pipe",
@@ -99,7 +103,7 @@ export function createWorktree(params: {
     });
   } else if (remoteBranch.exitCode === 0) {
     // Branch exists on remote, track it
-    console.log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree tracking remote branch: ${branchName}`);
+    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree tracking remote branch: ${branchName}`);
     result = spawnSync(["git", "worktree", "add", "--track", "-b", branchName, worktreePath, `origin/${branchName}`], {
       cwd: gitRoot,
       stdout: "pipe",
@@ -107,7 +111,7 @@ export function createWorktree(params: {
     });
   } else {
     // Create new branch from base
-    console.log(`\x1b[38;5;141m[worktree]\x1b[0m Creating new worktree with branch: ${branchName} from ${baseBranch}`);
+    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating new worktree with branch: ${branchName} from ${baseBranch}`);
     result = spawnSync(["git", "worktree", "add", "-b", branchName, worktreePath, `origin/${baseBranch}`], {
       cwd: gitRoot,
       stdout: "pipe",
@@ -117,11 +121,11 @@ export function createWorktree(params: {
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.toString();
-    console.error(`\x1b[38;5;141m[worktree]\x1b[0m Failed to create worktree:`, stderr);
+    logError(`\x1b[38;5;141m[worktree]\x1b[0m Failed to create worktree:`, stderr);
     return { success: false, error: stderr };
   }
 
-  console.log(`\x1b[38;5;141m[worktree]\x1b[0m Created worktree at: ${worktreePath}`);
+  log(`\x1b[38;5;141m[worktree]\x1b[0m Created worktree at: ${worktreePath}`);
   return { success: true, worktreePath };
 }
 
@@ -232,9 +236,9 @@ export function createSession(params: {
       workingDir = result.worktreePath;
       worktreePath = result.worktreePath;
       gitBranch = branchName;
-      console.log(`\x1b[38;5;141m[session]\x1b[0m Using worktree: ${workingDir}`);
+      log(`\x1b[38;5;141m[session]\x1b[0m Using worktree: ${workingDir}`);
     } else {
-      console.error(`\x1b[38;5;141m[session]\x1b[0m Failed to create worktree:`, result.error);
+      logError(`\x1b[38;5;141m[session]\x1b[0m Failed to create worktree:`, result.error);
     }
   }
 
@@ -291,7 +295,7 @@ export function createSession(params: {
   ptyProcess.onData((data: string) => {
     // Debug: log if we see OPENUI in the data
     if (data.includes("OPENUI")) {
-      console.log(`\x1b[38;5;141m[pty-data]\x1b[0m Found OPENUI in chunk:`, data.length, "chars");
+      log(`\x1b[38;5;141m[pty-data]\x1b[0m Found OPENUI in chunk:`, data.length, "chars");
     }
 
     session.outputBuffer.push(data);
@@ -306,7 +310,7 @@ export function createSession(params: {
     if (agentId === "claude") {
       const metrics = parseMetrics(data);
       if (metrics) {
-        console.log(`\x1b[38;5;141m[metrics]\x1b[0m Parsed:`, JSON.stringify(metrics));
+        log(`\x1b[38;5;141m[metrics]\x1b[0m Parsed:`, JSON.stringify(metrics));
         session.metrics = metrics;
         // Broadcast metrics update
         for (const client of session.clients) {
@@ -355,7 +359,7 @@ export function createSession(params: {
     }
   }, 300);
 
-  console.log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}`);
+  log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}`);
   return { session, cwd: workingDir, gitBranch: gitBranch || undefined };
 }
 
@@ -366,7 +370,7 @@ export function deleteSession(sessionId: string) {
   if (session.pty) session.pty.kill();
 
   sessions.delete(sessionId);
-  console.log(`\x1b[38;5;141m[session]\x1b[0m Killed ${sessionId}`);
+  log(`\x1b[38;5;141m[session]\x1b[0m Killed ${sessionId}`);
   return true;
 }
 
@@ -374,7 +378,7 @@ export function restoreSessions() {
   const { loadState } = require("./persistence");
   const state = loadState();
 
-  console.log(`\x1b[38;5;245m[restore]\x1b[0m Found ${state.nodes.length} saved sessions`);
+  log(`\x1b[38;5;245m[restore]\x1b[0m Found ${state.nodes.length} saved sessions`);
 
   for (const node of state.nodes) {
     const buffer = loadBuffer(node.sessionId);
@@ -402,6 +406,6 @@ export function restoreSessions() {
     };
 
     sessions.set(node.sessionId, session);
-    console.log(`\x1b[38;5;245m[restore]\x1b[0m Restored ${node.sessionId} (${node.agentName}) branch: ${gitBranch || 'none'}`);
+    log(`\x1b[38;5;245m[restore]\x1b[0m Restored ${node.sessionId} (${node.agentName}) branch: ${gitBranch || 'none'}`);
   }
 }

@@ -15,6 +15,9 @@ import {
 } from "../services/linear";
 
 const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
+const QUIET = !!process.env.OPENUI_QUIET;
+const log = QUIET ? () => {} : console.log.bind(console);
+const logError = QUIET ? () => {} : console.error.bind(console);
 
 export const apiRoutes = new Hono();
 
@@ -98,15 +101,23 @@ apiRoutes.get("/agents", (c) => {
   return c.json(agents);
 });
 
+// Cache for scanned metrics to avoid re-scanning on every request
+const metricsCache = new Map<string, { metrics: any; timestamp: number }>();
+const METRICS_CACHE_TTL = 2000; // 2 seconds
+
 apiRoutes.get("/sessions", (c) => {
+  const now = Date.now();
   const sessionList = Array.from(sessions.entries()).map(([id, session]) => {
     session.status = detectStatus(session);
-    // Scan buffer for latest metrics if not already set
+    // Scan buffer for metrics with caching (only for claude sessions)
     if (session.agentId === "claude") {
-      const scannedMetrics = scanBufferForMetrics(session);
-      if (scannedMetrics) {
-        console.log(`\x1b[38;5;141m[api]\x1b[0m Scanned metrics for ${id}:`, JSON.stringify(scannedMetrics));
-        session.metrics = scannedMetrics;
+      const cached = metricsCache.get(id);
+      if (!cached || now - cached.timestamp > METRICS_CACHE_TTL) {
+        const scannedMetrics = scanBufferForMetrics(session);
+        if (scannedMetrics) {
+          session.metrics = scannedMetrics;
+          metricsCache.set(id, { metrics: scannedMetrics, timestamp: now });
+        }
       }
     }
     return {
@@ -274,7 +285,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     ptyProcess.write(`${session.command}\r`);
   }, 300);
 
-  console.log(`\x1b[38;5;141m[session]\x1b[0m Restarted ${sessionId}`);
+  log(`\x1b[38;5;141m[session]\x1b[0m Restarted ${sessionId}`);
   return c.json({ success: true });
 });
 
@@ -428,24 +439,24 @@ apiRoutes.get("/linear/teams", async (c) => {
 
 // Get my tickets
 apiRoutes.get("/linear/tickets", async (c) => {
-  console.log(`\x1b[38;5;141m[api]\x1b[0m GET /linear/tickets called`);
+  log(`\x1b[38;5;141m[api]\x1b[0m GET /linear/tickets called`);
   const config = loadConfig();
-  console.log(`\x1b[38;5;141m[api]\x1b[0m Config loaded, hasApiKey:`, !!config.apiKey);
+  log(`\x1b[38;5;141m[api]\x1b[0m Config loaded, hasApiKey:`, !!config.apiKey);
 
   if (!config.apiKey) {
-    console.log(`\x1b[38;5;141m[api]\x1b[0m No API key, returning 400`);
+    log(`\x1b[38;5;141m[api]\x1b[0m No API key, returning 400`);
     return c.json({ error: "Linear not configured" }, 400);
   }
 
   const teamId = c.req.query("teamId") || config.defaultTeamId;
-  console.log(`\x1b[38;5;141m[api]\x1b[0m TeamId:`, teamId || "(none)");
+  log(`\x1b[38;5;141m[api]\x1b[0m TeamId:`, teamId || "(none)");
 
   try {
     const tickets = await fetchMyTickets(config.apiKey, teamId);
-    console.log(`\x1b[38;5;141m[api]\x1b[0m Returning ${tickets.length} tickets`);
+    log(`\x1b[38;5;141m[api]\x1b[0m Returning ${tickets.length} tickets`);
     return c.json(tickets);
   } catch (e: any) {
-    console.error(`\x1b[38;5;141m[api]\x1b[0m Error fetching tickets:`, e.message);
+    logError(`\x1b[38;5;141m[api]\x1b[0m Error fetching tickets:`, e.message);
     return c.json({ error: e.message }, 500);
   }
 });

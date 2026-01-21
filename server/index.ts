@@ -9,6 +9,10 @@ import type { WebSocketData } from "./types";
 
 const app = new Hono();
 const PORT = Number(process.env.PORT) || 6968;
+const QUIET = !!process.env.OPENUI_QUIET;
+
+// Conditionally log only in dev mode
+const log = QUIET ? () => {} : console.log.bind(console);
 
 // Middleware
 app.use("*", cors());
@@ -49,7 +53,7 @@ Bun.serve<WebSocketData>({
         return;
       }
 
-      console.log(`\x1b[38;5;245m[ws]\x1b[0m Connected to ${sessionId}`);
+      log(`\x1b[38;5;245m[ws]\x1b[0m Connected to ${sessionId}`);
       session.clients.add(ws);
 
       if (session.outputBuffer.length > 0 && !session.isRestored && session.pty) {
@@ -89,7 +93,7 @@ Bun.serve<WebSocketData>({
             break;
         }
       } catch (e) {
-        console.error("Error processing message:", e);
+        if (!QUIET) console.error("Error processing message:", e);
       }
     },
     close(ws) {
@@ -97,7 +101,7 @@ Bun.serve<WebSocketData>({
       const session = sessions.get(sessionId);
       if (session) {
         session.clients.delete(ws);
-        console.log(`\x1b[38;5;245m[ws]\x1b[0m Disconnected from ${sessionId}`);
+        log(`\x1b[38;5;245m[ws]\x1b[0m Disconnected from ${sessionId}`);
       }
     },
   },
@@ -106,8 +110,8 @@ Bun.serve<WebSocketData>({
 // Restore sessions on startup
 restoreSessions();
 
-console.log(`\x1b[38;5;141m[server]\x1b[0m Running on http://localhost:${PORT}`);
-console.log(`\x1b[38;5;245m[server]\x1b[0m Launch directory: ${process.env.LAUNCH_CWD || process.cwd()}`);
+log(`\x1b[38;5;141m[server]\x1b[0m Running on http://localhost:${PORT}`);
+log(`\x1b[38;5;245m[server]\x1b[0m Launch directory: ${process.env.LAUNCH_CWD || process.cwd()}`);
 
 // Periodic state save
 setInterval(() => {
@@ -116,7 +120,7 @@ setInterval(() => {
 
 // Cleanup on exit
 process.on("SIGINT", () => {
-  console.log("\n\x1b[38;5;245m[server]\x1b[0m Saving state before exit...");
+  log("\n\x1b[38;5;245m[server]\x1b[0m Saving state before exit...");
   saveState(sessions);
   for (const [, session] of sessions) {
     if (session.pty) session.pty.kill();

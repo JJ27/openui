@@ -19,6 +19,7 @@ import {
   ArrowUp,
   Github,
   Brain,
+  RefreshCw,
 } from "lucide-react";
 import { useStore, Agent, AgentSession } from "../stores/useStore";
 
@@ -116,8 +117,6 @@ export function NewSessionModal({
 
   // Track if we've initialized for this modal open
   const [initialized, setInitialized] = useState(false);
-  // Track if we've already tried to load tickets
-  const [ticketsLoaded, setTicketsLoaded] = useState(false);
 
   // Reset form when modal opens (only once per open)
   useEffect(() => {
@@ -160,17 +159,16 @@ export function NewSessionModal({
     } else if (!open) {
       // Reset flags when modal closes
       setInitialized(false);
-      setTicketsLoaded(false);
+      setLinearConfigured(null);
     }
   }, [open, initialized, existingSession, agents]);
 
-  // Load tickets when switching to linear tab (only once)
+  // Load tickets when switching to linear tab
   useEffect(() => {
-    if (activeTab === "linear" && linearConfigured && !ticketsLoaded && !ticketsLoading) {
-      setTicketsLoaded(true);
+    if (activeTab === "linear" && linearConfigured === true && !ticketsLoading && tickets.length === 0 && !ticketsError) {
       loadMyTickets();
     }
-  }, [activeTab, linearConfigured, ticketsLoaded, ticketsLoading]);
+  }, [activeTab, linearConfigured]);
 
   // Generate branch name from ticket (Linear or GitHub)
   useEffect(() => {
@@ -580,8 +578,8 @@ export function NewSessionModal({
                       {!selectedTicket ? (
                         <>
                           {/* Search */}
-                          <form onSubmit={handleSearch}>
-                            <div className="relative">
+                          <form onSubmit={handleSearch} className="flex gap-2">
+                            <div className="relative flex-1">
                               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
                               <input
                                 type="text"
@@ -591,6 +589,15 @@ export function NewSessionModal({
                                 className="w-full pl-9 pr-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
                               />
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => loadMyTickets()}
+                              disabled={ticketsLoading}
+                              className="px-3 py-2 rounded-md bg-canvas border border-border text-zinc-400 hover:text-white hover:bg-surface-active disabled:opacity-50 transition-colors"
+                              title="Refresh tickets"
+                            >
+                              <RefreshCw className={`w-4 h-4 ${ticketsLoading ? "animate-spin" : ""}`} />
+                            </button>
                           </form>
 
                           {/* Ticket list */}

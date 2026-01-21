@@ -4,7 +4,8 @@ import { $ } from "bun";
 
 const PORT = process.env.PORT || 6969;
 const LAUNCH_CWD = process.cwd();
-const CURRENT_VERSION = "1.0.0";
+const CURRENT_VERSION = "1.1.1";
+const IS_DEV = process.env.NODE_ENV === "development" || process.argv.includes("--dev");
 
 // Check for updates (non-blocking)
 async function checkForUpdates() {
@@ -26,27 +27,57 @@ async function checkForUpdates() {
   }
 }
 
+// Clear screen and show ASCII art
+console.clear();
 console.log(`
-\x1b[38;5;251m  ┌─────────────────────────────────────┐
-  │                                     │
-  │   \x1b[38;5;141m○\x1b[38;5;251m  \x1b[1mOpenUI\x1b[0m\x1b[38;5;251m  v${CURRENT_VERSION}                 │
-  │      \x1b[38;5;245mAI Agent Canvas\x1b[38;5;251m               │
-  │                                     │
-  └─────────────────────────────────────┘\x1b[0m
-`);
+\x1b[38;5;141m
+    ██╗      █████╗ ██╗   ██╗███╗   ██╗ ██████╗██╗  ██╗██╗███╗   ██╗ ██████╗
+    ██║     ██╔══██╗██║   ██║████╗  ██║██╔════╝██║  ██║██║████╗  ██║██╔════╝
+    ██║     ███████║██║   ██║██╔██╗ ██║██║     ███████║██║██╔██╗ ██║██║  ███╗
+    ██║     ██╔══██║██║   ██║██║╚██╗██║██║     ██╔══██║██║██║╚██╗██║██║   ██║
+    ███████╗██║  ██║╚██████╔╝██║ ╚████║╚██████╗██║  ██║██║██║ ╚████║╚██████╔╝
+    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝
 
-console.log(`\x1b[38;5;245m  Directory:\x1b[0m ${LAUNCH_CWD}`);
-console.log(`\x1b[38;5;245m  Server:\x1b[0m    \x1b[38;5;141mhttp://localhost:${PORT}\x1b[0m`);
-console.log(`\x1b[38;5;245m  Press\x1b[0m     \x1b[38;5;245mCtrl+C to stop\x1b[0m\n`);
+    ██╗   ██╗ ██████╗ ██╗   ██╗██████╗      █████╗ ██╗
+    ╚██╗ ██╔╝██╔═══██╗██║   ██║██╔══██╗    ██╔══██╗██║
+     ╚████╔╝ ██║   ██║██║   ██║██████╔╝    ███████║██║
+      ╚██╔╝  ██║   ██║██║   ██║██╔══██╗    ██╔══██║██║
+       ██║   ╚██████╔╝╚██████╔╝██║  ██║    ██║  ██║██║
+       ╚═╝    ╚═════╝  ╚═════╝ ╚═╝  ╚═╝    ╚═╝  ╚═╝╚═╝
+
+     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗
+    ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██╔══██╗████╗  ██║██╔══██╗
+    ██║     ██║   ██║██╔████╔██║██╔████╔██║███████║██╔██╗ ██║██║  ██║
+    ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║  ██║
+    ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝
+     ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝
+
+     ██████╗███████╗███╗   ██╗████████╗███████╗██████╗
+    ██╔════╝██╔════╝████╗  ██║╚══██╔══╝██╔════╝██╔══██╗
+    ██║     █████╗  ██╔██╗ ██║   ██║   █████╗  ██████╔╝
+    ██║     ██╔══╝  ██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗
+    ╚██████╗███████╗██║ ╚████║   ██║   ███████╗██║  ██║
+     ╚═════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+\x1b[0m
+
+\x1b[38;5;251m                    ╔═══════════════════════════════════════╗
+                    ║                                       ║
+                    ║   \x1b[1m\x1b[38;5;141mhttp://localhost:${PORT}\x1b[0m\x1b[38;5;251m                 ║
+                    ║                                       ║
+                    ╚═══════════════════════════════════════╝\x1b[0m
+
+\x1b[38;5;245m                         Press Ctrl+C to stop\x1b[0m
+`);
 
 // Check for updates in background
 checkForUpdates();
 
 // Start the server with LAUNCH_CWD env var
+// In production mode, suppress server output
 const server = Bun.spawn(["bun", "run", "server/index.ts"], {
   cwd: import.meta.dir + "/..",
-  stdio: ["inherit", "inherit", "inherit"],
-  env: { ...process.env, PORT: String(PORT), LAUNCH_CWD }
+  stdio: IS_DEV ? ["inherit", "inherit", "inherit"] : ["inherit", "ignore", "ignore"],
+  env: { ...process.env, PORT: String(PORT), LAUNCH_CWD, OPENUI_QUIET: IS_DEV ? "" : "1" }
 });
 
 // Open browser
