@@ -159,6 +159,10 @@ function AppContent() {
       }
       // Save category positions/sizes separately
       if (node.type === "category") {
+        // Get dimensions - could be in style, measured, or width/height
+        const width = node.measured?.width || node.width || (typeof node.style?.width === 'number' ? node.style.width : parseInt(node.style?.width as string) || 250);
+        const height = node.measured?.height || node.height || (typeof node.style?.height === 'number' ? node.style.height : parseInt(node.style?.height as string) || 200);
+
         fetch(`/api/categories/${node.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -167,8 +171,8 @@ function AppContent() {
               x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,
               y: Math.round(node.position.y / GRID_SIZE) * GRID_SIZE,
             },
-            width: node.style?.width || 200,
-            height: node.style?.height || 150,
+            width,
+            height,
           }),
         }).catch(console.error);
       }
@@ -198,8 +202,9 @@ function AppContent() {
     const positionChanges = changes.filter(
       (c) => c.type === "position" && "dragging" in c && c.dragging === false
     );
+    // Check for dimension changes - resizing property might be true, false, or undefined
     const dimensionChanges = changes.filter(
-      (c) => c.type === "dimensions" && "resizing" in c && c.resizing === false
+      (c) => c.type === "dimensions" && (!("resizing" in c) || c.resizing === false)
     );
 
     if (positionChanges.length > 0 || dimensionChanges.length > 0) {
