@@ -1,6 +1,6 @@
 {
   "name": "@fallom/openui",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Visual canvas UI for managing AI coding agents locally",
   "author": "Fallom AI",
   "license": "MIT",
