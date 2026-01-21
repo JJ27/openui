@@ -1,4 +1,4 @@
-import { MessageSquare, WifiOff, FolderGit2 } from "lucide-react";
+import { MessageSquare, WifiOff, FolderGit2, GitBranch } from "lucide-react";
 import { AgentStatus, ClaudeMetrics } from "../../stores/useStore";
 
 const statusConfig: Record<AgentStatus, { label: string; color: string; animate?: boolean }> = {
@@ -20,6 +20,7 @@ interface AgentNodeCardProps {
   status: AgentStatus;
   metrics?: ClaudeMetrics;
   cwd?: string;
+  gitBranch?: string;
 }
 
 export function AgentNodeCard({
@@ -31,6 +32,7 @@ export function AgentNodeCard({
   status,
   metrics,
   cwd,
+  gitBranch,
 }: AgentNodeCardProps) {
   const statusInfo = statusConfig[status] || statusConfig.idle;
 
@@ -97,11 +99,17 @@ export function AgentNodeCard({
           )}
         </div>
 
-        {/* Directory */}
-        {dirName && (
+        {/* Directory & Branch */}
+        {(dirName || gitBranch) && (
           <div className="mt-2 flex items-center gap-1.5 text-[9px] text-zinc-500">
             <FolderGit2 className="w-3 h-3 flex-shrink-0" />
             <span className="truncate">{dirName}</span>
+            {gitBranch && (
+              <>
+                <GitBranch className="w-3 h-3 flex-shrink-0 text-zinc-600" />
+                <span className="truncate text-purple-400">{gitBranch}</span>
+              </>
+            )}
           </div>
         )}
 

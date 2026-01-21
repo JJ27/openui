@@ -1,7 +1,25 @@
-import { spawn } from "bun-pty";
+import { spawnSync } from "bun";
+import { spawn as spawnPty } from "bun-pty";
 import type { Session, ClaudeMetrics } from "../types";
 import { loadBuffer } from "./persistence";
 import { detectStatus } from "./statusDetector";
+
+// Get git branch for a directory
+function getGitBranch(cwd: string): string | null {
+  try {
+    const result = spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode === 0) {
+      return result.stdout.toString().trim();
+    }
+  } catch {
+    // Not a git repo or git not available
+  }
+  return null;
+}
 
 // Parse OpenUI metrics from statusline output
 // Format: [OPENUI:{"m":"Opus","c":0.01,"la":10,"lr":5,"cp":25,"it":1000,"ot":500,"s":"idle"}]
@@ -71,7 +89,7 @@ export function createSession(params: {
 }) {
   const { sessionId, agentId, agentName, command, cwd, nodeId, customName, customColor } = params;
 
-  const ptyProcess = spawn("/bin/bash", [], {
+  const ptyProcess = spawnPty("/bin/bash", [], {
     name: "xterm-256color",
     cwd,
     env: { ...process.env, TERM: "xterm-256color" },
@@ -79,6 +97,7 @@ export function createSession(params: {
     cols: 120,
   });
 
+  const gitBranch = getGitBranch(cwd);
   const now = Date.now();
   const session: Session = {
     pty: ptyProcess,
@@ -86,6 +105,7 @@ export function createSession(params: {
     agentName,
     command,
     cwd,
+    gitBranch: gitBranch || undefined,
     createdAt: new Date().toISOString(),
     clients: new Set(),
     outputBuffer: [],
@@ -187,6 +207,7 @@ export function restoreSessions() {
 
   for (const node of state.nodes) {
     const buffer = loadBuffer(node.sessionId);
+    const gitBranch = getGitBranch(node.cwd);
 
     const session: Session = {
       pty: null,
@@ -194,6 +215,7 @@ export function restoreSessions() {
       agentName: node.agentName,
       command: node.command,
       cwd: node.cwd,
+      gitBranch: gitBranch || undefined,
       createdAt: node.createdAt,
       clients: new Set(),
       outputBuffer: buffer,
@@ -209,6 +231,6 @@ export function restoreSessions() {
     };
 
     sessions.set(node.sessionId, session);
-    console.log(`\x1b[38;5;245m[restore]\x1b[0m Restored ${node.sessionId} (${node.agentName})`);
+    console.log(`\x1b[38;5;245m[restore]\x1b[0m Restored ${node.sessionId} (${node.agentName}) branch: ${gitBranch || 'none'}`);
   }
 }

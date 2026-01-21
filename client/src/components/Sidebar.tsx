@@ -20,7 +20,8 @@ import {
   BarChart3,
   Activity,
   DollarSign,
-  FileCode
+  FileCode,
+  GitBranch
 } from "lucide-react";
 import { useStore, AgentStatus } from "../stores/useStore";
 import { Terminal } from "./Terminal";
@@ -572,6 +573,15 @@ export function Sidebar() {
                   {session.cwd.split('/').slice(-2).join('/')}
                 </span>
               </div>
+              {session.gitBranch && (
+                <div className="flex items-center gap-2 text-xs">
+                  <GitBranch className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                  <span className="text-zinc-500">Branch</span>
+                  <span className="text-purple-400 font-mono ml-auto">
+                    {session.gitBranch}
+                  </span>
+                </div>
+              )}
               {session.metrics?.model && (
                 <div className="flex items-center gap-2 text-xs">
                   <Activity className="w-3 h-3 text-zinc-600 flex-shrink-0" />

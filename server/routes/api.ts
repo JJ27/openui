@@ -60,6 +60,7 @@ apiRoutes.get("/sessions", (c) => {
       command: session.command,
       createdAt: session.createdAt,
       cwd: session.cwd,
+      gitBranch: session.gitBranch,
       status: session.status,
       customName: session.customName,
       customColor: session.customColor,
@@ -207,4 +208,64 @@ apiRoutes.delete("/sessions/:sessionId", (c) => {
     return c.json({ success: true });
   }
   return c.json({ error: "Session not found" }, 404);
+});
+
+// Categories (groups)
+apiRoutes.get("/categories", (c) => {
+  const state = loadState();
+  return c.json(state.categories || []);
+});
+
+apiRoutes.post("/categories", async (c) => {
+  const state = loadState();
+  const category = await c.req.json();
+
+  if (!state.categories) state.categories = [];
+  state.categories.push(category);
+
+  const { writeFileSync } = require("fs");
+  const { join } = require("path");
+  const DATA_DIR = join(process.env.LAUNCH_CWD || process.cwd(), ".openui");
+  writeFileSync(join(DATA_DIR, "state.json"), JSON.stringify(state, null, 2));
+
+  return c.json({ success: true });
+});
+
+apiRoutes.patch("/categories/:categoryId", async (c) => {
+  const categoryId = c.req.param("categoryId");
+  const updates = await c.req.json();
+  const state = loadState();
+
+  if (!state.categories) return c.json({ error: "Category not found" }, 404);
+
+  const category = state.categories.find(cat => cat.id === categoryId);
+  if (!category) return c.json({ error: "Category not found" }, 404);
+
+  Object.assign(category, updates);
+
+  const { writeFileSync } = require("fs");
+  const { join } = require("path");
+  const DATA_DIR = join(process.env.LAUNCH_CWD || process.cwd(), ".openui");
+  writeFileSync(join(DATA_DIR, "state.json"), JSON.stringify(state, null, 2));
+
+  return c.json({ success: true });
+});
+
+apiRoutes.delete("/categories/:categoryId", (c) => {
+  const categoryId = c.req.param("categoryId");
+  const state = loadState();
+
+  if (!state.categories) return c.json({ error: "Category not found" }, 404);
+
+  const index = state.categories.findIndex(cat => cat.id === categoryId);
+  if (index === -1) return c.json({ error: "Category not found" }, 404);
+
+  state.categories.splice(index, 1);
+
+  const { writeFileSync } = require("fs");
+  const { join } = require("path");
+  const DATA_DIR = join(process.env.LAUNCH_CWD || process.cwd(), ".openui");
+  writeFileSync(join(DATA_DIR, "state.json"), JSON.stringify(state, null, 2));
+
+  return c.json({ success: true });
 });

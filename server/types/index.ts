@@ -5,11 +5,11 @@ export type AgentStatus = "starting" | "running" | "waiting_input" | "tool_calli
 
 export interface Session {
   pty: IPty | null;
-  stateTrackerPty: IPty | null;
   agentId: string;
   agentName: string;
   command: string;
   cwd: string;
+  gitBranch?: string;
   createdAt: string;
   clients: Set<ServerWebSocket<WebSocketData>>;
   outputBuffer: string[];
@@ -22,8 +22,18 @@ export interface Session {
   notes?: string;
   nodeId: string;
   isRestored?: boolean;
-  currentTool?: string;
-  lastJsonEvent?: any;
+  metrics?: ClaudeMetrics;
+}
+
+export interface ClaudeMetrics {
+  model: string;
+  cost: number;
+  linesAdded: number;
+  linesRemoved: number;
+  contextPercent: number;
+  inputTokens: number;
+  outputTokens: number;
+  state?: "idle" | "asking" | "working";
 }
 
 export interface PersistedNode {
@@ -40,8 +50,18 @@ export interface PersistedNode {
   position: { x: number; y: number };
 }
 
+export interface PersistedCategory {
+  id: string;
+  label: string;
+  color: string;
+  position: { x: number; y: number };
+  width: number;
+  height: number;
+}
+
 export interface PersistedState {
   nodes: PersistedNode[];
+  categories?: PersistedCategory[];
 }
 
 export interface Agent {

@@ -32,6 +32,7 @@ export interface AgentSession {
   color: string;
   createdAt: string;
   cwd: string;
+  gitBranch?: string;
   status: AgentStatus;
   customName?: string;
   customColor?: string;

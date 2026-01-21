@@ -59,6 +59,7 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           status={status}
           metrics={session?.metrics}
           cwd={session?.cwd}
+          gitBranch={session?.gitBranch}
         />
       </motion.div>
 
