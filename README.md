@@ -1,184 +1,72 @@
-<div align="center">
-
 # OpenUI
 
-### The Visual Canvas for AI Coding Agents
+Visual canvas for managing AI coding agents locally.
 
-Stop juggling terminal windows. See all your AI agents at once.
-
-[Demo](#demo) | [Install](#installation) | [Features](#features) | [Contributing](#contributing)
-
-<!-- Add actual screenshot here -->
-![OpenUI Canvas](https://via.placeholder.com/800x450/1a1a2e/ffffff?text=OpenUI+Canvas+Screenshot)
-
-</div>
-
----
-
-## The Problem
-
-You're using Claude Code, OpenCode, or other AI coding agents. You have 5 terminal tabs open. You can't remember which agent is working on what. One is waiting for input and you didn't notice. Sound familiar?
-
-## The Solution
-
-**OpenUI** gives you a visual canvas where every AI agent is a node you can see, organize, and interact with — all in one place.
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│                                                                │
-│    ┌──────────┐     ┌──────────┐     ┌──────────┐            │
-│    │  Claude  │     │  Claude  │     │ OpenCode │            │
-│    │  Code    │     │  Code    │     │          │            │
-│    │ ● RUNNING│     │ ○ IDLE   │     │ ⏳ WAITING│            │
-│    └──────────┘     └──────────┘     └──────────┘            │
-│         │                                   │                  │
-│         └───────────── Canvas ─────────────┘                  │
-│                                                                │
-└────────────────────────────────────────────────────────────────┘
-```
-
-## Demo
-
-<!-- Replace with actual GIF/video -->
-https://github.com/user-attachments/assets/your-demo-video
-
-## Features
-
-**Visual Agent Management**
-- Spawn multiple AI agents on an infinite canvas
-- Drag, drop, and arrange agents however you like
-- Color-code and name your agents for easy identification
-
-**Real-time Status Monitoring**
-- See at a glance: running, idle, waiting for input, or error
-- Never miss when an agent needs your attention
-
-**Integrated Terminal**
-- Full terminal emulation right in the browser
-- Click any agent to open its terminal session
-- Everything you'd expect: colors, scrollback, resize support
-
-**Session Persistence**
-- Your layout survives browser refreshes
-- Pick up right where you left off
-
-**Supported Agents**
-- Claude Code (Anthropic's official CLI)
-- OpenCode
-- More coming soon...
+Stop juggling terminal windows. Manage Claude Code and OpenCode agents on an infinite canvas.
 
 ## Installation
 
-### Prerequisites
-
-- [Bun](https://bun.sh) runtime
-
 ```bash
-curl -fsSL https://bun.sh/install | bash
-```
+# Run directly
+npx @fallomai/openui
 
-### Quick Start
-
-```bash
-# Clone the repo
-git clone https://github.com/YOUR_USERNAME/openui.git
-cd openui
-
-# Install dependencies
-bun install
-bun run install:client
-
-# Start OpenUI
-bun run dev
-```
-
-Then open [http://localhost:5173](http://localhost:5173)
-
-### One-liner (coming soon)
-
-```bash
+# Or with bun
 bunx openui
 ```
 
+## What It Does
+
+OpenUI gives you a visual workspace where each AI agent (Claude Code, OpenCode) is a node on a canvas. Click a node to interact with its terminal. See all agent states at a glance.
+
+**Features:**
+- Infinite canvas for organizing multiple AI agents
+- Real-time status indicators (running, idle, waiting for input, tool calling)
+- Integrated terminal emulation (xterm.js)
+- Session persistence across restarts
+- Custom names, colors, and icons per agent
+- WebSocket-based communication for live updates
+
 ## Usage
 
-1. **Start OpenUI** — Run `bun run dev` from the project root
-2. **Add an agent** — Click the + button to spawn a new AI agent
-3. **Interact** — Click any agent node to open its terminal
-4. **Organize** — Drag nodes around the canvas to arrange your workspace
-5. **Customize** — Right-click to rename, recolor, or add notes
+1. Run `npx @fallomai/openui` in your project directory
+2. Browser opens automatically at `http://localhost:6969`
+3. Click "+" to spawn a new agent (Claude Code or OpenCode)
+4. Click any node to open its terminal
+5. Drag nodes to organize your workspace
+6. Click the edit icon to customize name, color, or icon
+
+## How It Works
+
+OpenUI runs a local server that:
+- Spawns PTY sessions for each agent
+- Tracks agent state via JSON events (Claude Code) or pattern matching (OpenCode)
+- Streams terminal I/O over WebSocket
+- Persists canvas layout and session data to `~/.openui/`
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Runtime | [Bun](https://bun.sh) |
-| Backend | [Hono](https://hono.dev) + WebSockets |
-| Frontend | [React](https://react.dev) + [Vite](https://vitejs.dev) |
-| Canvas | [React Flow](https://reactflow.dev) |
-| Terminal | [xterm.js](https://xtermjs.org) |
-| State | [Zustand](https://zustand-demo.pmnd.rs) |
-| Styling | [Tailwind CSS](https://tailwindcss.com) |
-
-## Architecture
-
-```
-Browser                          Server (Bun)
-┌─────────────────────┐         ┌─────────────────────┐
-│                     │         │                     │
-│  React + ReactFlow  │◄──REST──►  Hono HTTP Server   │
-│                     │         │                     │
-│  xterm.js Terminal  │◄──WS────►  PTY Sessions       │
-│                     │         │  (bun-pty)          │
-│  Zustand Store      │         │                     │
-│                     │         │  State Persistence  │
-└─────────────────────┘         │  ~/.openui/         │
-                                └─────────────────────┘
-```
+- **Runtime**: Bun
+- **Backend**: Hono + WebSockets + bun-pty
+- **Frontend**: React + React Flow + xterm.js
+- **State**: Zustand
 
 ## Development
 
 ```bash
-# Run in development mode (hot reload)
-bun run dev
+git clone https://github.com/Fallomai/openui.git
+cd openui
 
-# Build for production
-bun run build
+bun install
+cd client && bun install && cd ..
 
-# Run production server
-bun run start
+bun run dev  # Server on 6968, UI on 6969
 ```
 
-## Roadmap
+## Requirements
 
-- [ ] Plugin system for custom agents
-- [ ] Agent-to-agent communication
-- [ ] Shared canvas sessions (multiplayer)
-- [ ] Task queuing and orchestration
-- [ ] Docker support
-- [ ] Cloud deployment option
-
-## Contributing
-
-Contributions are welcome! Whether it's:
-
-- Bug reports
-- Feature requests
-- Pull requests
-- Documentation improvements
-
-Please feel free to open an issue or submit a PR.
+- Bun 1.0+
+- Claude Code or OpenCode installed locally
 
 ## License
 
 MIT
-
----
-
-<div align="center">
-
-**If OpenUI helps you manage your AI agents better, give it a star!**
-
-Made with coffee and too many terminal tabs
-
-</div>
