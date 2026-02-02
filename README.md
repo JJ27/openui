@@ -63,22 +63,10 @@ Then forward port 6969 from your dev machine to access the UI locally.
 - `bun` - Install with: `curl -fsSL https://bun.sh/install | bash`
 - `llm agent` - Claude Code agent interface (already available on Databricks dev machines)
 
-### Public Installation
-
-```bash
-# Install globally
-npm install -g @fallom/openui
-openui
-
-# Or run without installing
-npx @fallom/openui
-bunx @fallom/openui
-```
-
 ## Quick Start
 
 1. Run `openui` (or `bun run dev` for development) in your project directory
-2. Browser opens at `http://localhost:6969`
+2. Open `http://localhost:6969` in your browser
 3. Click "+" to spawn agents (Claude Code, OpenCode, or Ralph Loop)
 4. Click any node to open its terminal
 5. Drag nodes to organize, create tabs to group them
@@ -90,21 +78,17 @@ bunx @fallom/openui
 - **Tabs**: Create multiple canvases to organize agents by project, team, or workflow
 - **Custom styling**: Set custom names, colors, and icons per agent
 - **Persistent layout**: All positions and organization saved across restarts
-- **Auto-center**: Automatically centers canvas when switching views
 
 ### Agent Monitoring
 - **Real-time status**: Running, Idle, Needs Input, Tool Calling, Disconnected
 - **Git integration**: Branch and repo info displayed on each node
 - **Directory tracking**: See working directory per agent
-- **Session count**: Active agent count displayed in header (excludes archived)
 
 ### Session Management
 - **Auto-resume**: Sessions automatically restore on server restart with proper state
 - **Manual resume**: Resume disconnected sessions with preserved context
-- **Bulk spawn**: Create multiple agents at once (placed in horizontal row)
 - **Session persistence**: All sessions saved to `.openui/state.json`
 - **Archive**: Archive completed sessions to keep workspace clean while preserving history
-- **Custom restart**: Restart sessions with modified commands or arguments
 
 ### GitHub Integration
 - Start sessions directly from GitHub issues
@@ -169,19 +153,7 @@ By default, OpenUI uses `llm agent claude` to spawn Claude Code instances. This 
 - **State**: Zustand
 - **Terminal**: xterm.js with fit addon and web links
 
-## Development
-
-```bash
-git clone https://github.com/JJ27/openui.git
-cd openui
-
-bun install
-cd client && bun install && cd ..
-
-bun run dev  # Server on 4242, UI on 6969
-```
-
-### Project Structure
+## Project Structure
 
 ```
 openui/
