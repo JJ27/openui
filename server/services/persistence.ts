@@ -43,6 +43,21 @@ export function migrateStateToHome(): { migrated: boolean; source?: string } {
     } catch (e) {
       console.log(`[persistence] Could not read existing state, proceeding with migration`);
     }
+  } else {
+    // New state doesn't exist, check if old state is actually newer
+    // This prevents overwriting newer data with older data
+    const { statSync } = require("fs");
+    try {
+      const oldStat = statSync(oldStateFile);
+      // If old state is more than 7 days old, don't migrate
+      const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      if (oldStat.mtimeMs < sevenDaysAgo) {
+        console.log(`[persistence] Old state is more than 7 days old, skipping migration`);
+        return { migrated: false };
+      }
+    } catch (e) {
+      // Ignore stat errors, proceed with migration
+    }
   }
 
   console.log(`[persistence] Migrating state from ${OLD_DATA_DIR} to ${DATA_DIR}`);
@@ -60,6 +75,28 @@ export function migrateStateToHome(): { migrated: boolean; source?: string } {
       for (const file of bufferFiles) {
         copyFileSync(join(oldBuffersDir, file), join(BUFFERS_DIR, file));
       }
+    }
+
+    // Delete old state file after successful migration to prevent re-migration
+    const { unlinkSync, rmdirSync } = require("fs");
+    try {
+      unlinkSync(oldStateFile);
+      // Try to remove old buffers dir if empty
+      if (existsSync(oldBuffersDir)) {
+        const remaining = readdirSync(oldBuffersDir);
+        if (remaining.length === 0) {
+          rmdirSync(oldBuffersDir);
+        }
+      }
+      // Try to remove old .openui dir if empty
+      const remaining = readdirSync(OLD_DATA_DIR);
+      if (remaining.length === 0) {
+        rmdirSync(OLD_DATA_DIR);
+      }
+      console.log(`[persistence] Cleaned up old state files`);
+    } catch (e) {
+      // Ignore cleanup errors
+      console.log(`[persistence] Could not clean up old state files:`, e);
     }
 
     console.log(`[persistence] Migration complete`);
@@ -157,6 +194,27 @@ export function loadState(): PersistedState {
   try {
     if (existsSync(STATE_FILE)) {
       const data = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
+
+      // Fix orphaned canvas IDs - if a node's canvas doesn't exist, assign to default
+      if (data.canvases && data.canvases.length > 0 && data.nodes) {
+        const validCanvasIds = new Set(data.canvases.map((c: any) => c.id));
+        const defaultCanvas = data.canvases.find((c: any) => c.isDefault) || data.canvases[0];
+        let fixedCount = 0;
+
+        data.nodes.forEach((node: any) => {
+          if (node.canvasId && !validCanvasIds.has(node.canvasId)) {
+            node.canvasId = defaultCanvas.id;
+            fixedCount++;
+          }
+        });
+
+        if (fixedCount > 0) {
+          console.log(`\x1b[38;5;245m[persistence]\x1b[0m Fixed ${fixedCount} orphaned canvas IDs`);
+          // Save the fixed state
+          writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
+        }
+      }
+
       console.log(`\x1b[38;5;245m[persistence]\x1b[0m Loaded state from ${STATE_FILE}`);
       return data;
     }
@@ -181,6 +239,7 @@ export function saveState(sessions: Map<string, Session>) {
   const defaultCanvas = state.canvases.find(c => c.isDefault) || state.canvases[0];
   const defaultCanvasId = defaultCanvas?.id || "canvas-default";
 
+  // Add active sessions from sessions Map
   for (const [sessionId, session] of sessions) {
     // Preserve existing position if we have one
     const existingNode = savedState.nodes.find(n => n.sessionId === sessionId);
@@ -212,6 +271,17 @@ export function saveState(sessions: Map<string, Session>) {
     });
 
     saveBuffer(sessionId, session.outputBuffer);
+  }
+
+  // Preserve sessions from state.json that aren't in sessions Map
+  // (includes archived sessions and recently unarchived sessions awaiting reload)
+  if (savedState.nodes) {
+    const activeSessionIds = new Set(sessions.keys());
+    const preservedNodes = savedState.nodes.filter(
+      n => !activeSessionIds.has(n.sessionId)
+    );
+    console.log(`[saveState] Preserving ${preservedNodes.length} nodes not in sessions Map`);
+    state.nodes.push(...preservedNodes);
   }
 
   try {

@@ -401,6 +401,13 @@ export function restoreSessions() {
   log(`\x1b[38;5;245m[restore]\x1b[0m Found ${state.nodes.length} saved sessions`);
 
   for (const node of state.nodes) {
+    // Skip archived sessions - they should not be in the active sessions Map
+    if (node.archived) {
+      console.log(`[restore] Skipping archived session: ${node.sessionId} (${node.customName})`);
+      continue;
+    }
+    console.log(`[restore] Loading session: ${node.sessionId} (${node.customName}) archived=${node.archived}`);
+
     const buffer = loadBuffer(node.sessionId);
     const gitBranch = getGitBranch(node.cwd);
 
@@ -425,7 +432,7 @@ export function restoreSessions() {
       isRestored: true,
       autoResumed: node.autoResumed || false,
       claudeSessionId: node.claudeSessionId,  // Restore Claude session ID for --resume
-      archived: node.archived || false,
+      archived: false,  // Active sessions are never archived
       canvasId: node.canvasId,  // Canvas/tab this agent belongs to
     };
 

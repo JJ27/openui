@@ -104,8 +104,36 @@ apiRoutes.get("/agents", (c) => {
 apiRoutes.get("/sessions", (c) => {
   const showArchived = c.req.query("archived") === "true";
 
+  // For archived sessions, load from state.json since they're not in sessions Map
+  if (showArchived) {
+    const state = loadState();
+    const archivedSessions = state.nodes
+      .filter(node => node.archived)
+      .map(node => ({
+        sessionId: node.sessionId,
+        nodeId: node.nodeId,
+        agentId: node.agentId,
+        agentName: node.agentName,
+        command: node.command,
+        createdAt: node.createdAt,
+        cwd: node.cwd,
+        originalCwd: undefined,
+        gitBranch: undefined,
+        status: "disconnected",
+        customName: node.customName,
+        customColor: node.customColor,
+        notes: node.notes,
+        isRestored: false,
+        ticketId: node.ticketId,
+        ticketTitle: node.ticketUrl,
+        canvasId: node.canvasId,
+      }));
+    return c.json(archivedSessions);
+  }
+
+  // For active sessions, get from sessions Map
   const sessionList = Array.from(sessions.entries())
-    .filter(([, session]) => showArchived ? session.archived : !session.archived)
+    .filter(([, session]) => !session.archived)
     .map(([id, session]) => {
       return {
         sessionId: id,
@@ -153,7 +181,9 @@ apiRoutes.get("/state", (c) => {
         isRestored: session?.isRestored,
       };
     })
-    .filter(n => n.isAlive);
+    // For archived view, show all archived sessions even if not alive
+    // For active view, only show sessions that are currently running
+    .filter(n => showArchived || n.isAlive);
 
   return c.json({ nodes });
 });
@@ -200,35 +230,36 @@ apiRoutes.post("/sessions", async (c) => {
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const workingDir = cwd || LAUNCH_CWD;
 
-  // Load ticket prompt template from Linear config
-  const linearConfig = loadConfig();
-  const ticketPromptTemplate = linearConfig.ticketPromptTemplate;
+  try {
+    const result = createSession({
+      sessionId,
+      agentId,
+      agentName,
+      command,
+      cwd: workingDir,
+      nodeId,
+      customName,
+      customColor,
+      ticketId,
+      ticketTitle,
+      ticketUrl,
+      branchName,
+      baseBranch,
+      createWorktreeFlag,
+      ticketPromptTemplate: undefined,
+    });
 
-  const result = createSession({
-    sessionId,
-    agentId,
-    agentName,
-    command,
-    cwd: workingDir,
-    nodeId,
-    customName,
-    customColor,
-    ticketId,
-    ticketTitle,
-    ticketUrl,
-    branchName,
-    baseBranch,
-    createWorktreeFlag,
-    ticketPromptTemplate,
-  });
-
-  saveState(sessions);
-  return c.json({
-    sessionId,
-    nodeId,
-    cwd: result.cwd,
-    gitBranch: result.gitBranch,
-  });
+    saveState(sessions);
+    return c.json({
+      sessionId,
+      nodeId,
+      cwd: result.cwd,
+      gitBranch: result.gitBranch,
+    });
+  } catch (error) {
+    console.error("[session creation error]", error);
+    return c.json({ error: String(error) }, 500);
+  }
 });
 
 apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
@@ -335,10 +366,34 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
   const { archived } = await c.req.json();
 
   const session = sessions.get(sessionId);
-  if (!session) return c.json({ error: "Session not found" }, 404);
 
-  session.archived = archived;
-  saveState(sessions);
+  if (session) {
+    // Session is active (in sessions Map) - update it directly
+    console.log(`[archive] Updating active session ${sessionId} archived=${archived}`);
+    session.archived = archived;
+    saveState(sessions);
+  } else {
+    // Session is not active (archived) - update state.json directly
+    console.log(`[archive] Session ${sessionId} not in Map, updating state.json directly`);
+    const state = loadState();
+    const node = state.nodes?.find(n => n.sessionId === sessionId);
+    if (!node) {
+      console.log(`[archive] ERROR: Session ${sessionId} not found in state.json`);
+      return c.json({ error: "Session not found" }, 404);
+    }
+
+    console.log(`[archive] Found node, updating archived from ${node.archived} to ${archived}`);
+    // Update archived status
+    node.archived = archived;
+
+    // Write state back (this will be preserved by saveState)
+    const { writeFileSync } = require("fs");
+    const { join } = require("path");
+    const { homedir } = require("os");
+    const stateFile = join(homedir(), ".openui", "state.json");
+    writeFileSync(stateFile, JSON.stringify(state, null, 2));
+    console.log(`[archive] Wrote updated state to ${stateFile}`);
+  }
 
   return c.json({ success: true });
 });

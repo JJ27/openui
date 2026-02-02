@@ -8,9 +8,21 @@ export function Header() {
   const { setAddAgentModalOpen, sessions, launchCwd, showArchived, setShowArchived } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // Count only non-archived sessions
-  const activeSessionCount = useMemo(() => {
-    return Array.from(sessions.values()).filter(s => !s.archived).length;
+  // Count active (non-archived) sessions by status
+  const statusCounts = useMemo(() => {
+    const activeSessions = Array.from(sessions.values()).filter(s => !s.archived);
+
+    return {
+      working: activeSessions.filter(s =>
+        s.status === "running" || s.status === "tool_calling"
+      ).length,
+      needsInput: activeSessions.filter(s =>
+        s.status === "waiting_input"
+      ).length,
+      idle: activeSessions.filter(s =>
+        s.status === "idle"
+      ).length,
+    };
   }, [sessions]);
 
   return (
@@ -32,11 +44,24 @@ export function Header() {
         </div>
       </div>
 
-      {/* Center - Session count */}
+      {/* Center - Status counts */}
       <div className="absolute left-1/2 -translate-x-1/2">
-        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-surface text-xs text-zinc-400">
-          <div className={`w-1.5 h-1.5 rounded-full ${activeSessionCount > 0 ? 'bg-green-500' : 'bg-zinc-600'}`} />
-          <span>{activeSessionCount} agent{activeSessionCount !== 1 ? "s" : ""}</span>
+        <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-surface text-xs">
+          {/* Working agents */}
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+            <span className="text-zinc-400">{statusCounts.working}</span>
+          </div>
+          {/* Needs input agents */}
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+            <span className="text-zinc-400">{statusCounts.needsInput}</span>
+          </div>
+          {/* Idle agents */}
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+            <span className="text-zinc-400">{statusCounts.idle}</span>
+          </div>
         </div>
       </div>
 

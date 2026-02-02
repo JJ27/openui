@@ -251,15 +251,9 @@ export const useStore = create<AppState>((set) => ({
       body: JSON.stringify({ archived: false }),
     });
 
-    // Reload state to restore unarchived session
-    // Session will appear on its original canvas (canvasId preserved)
-    await useStore.getState().loadState();
-
-    // Switch to the canvas where agent was restored
-    const restoredNode = useStore.getState().nodes.find((n: any) => n.id === nodeId);
-    if (restoredNode?.data?.canvasId && typeof restoredNode.data.canvasId === 'string') {
-      useStore.getState().setActiveCanvasId(restoredNode.data.canvasId);
-    }
+    // Reload the page to show unarchived session
+    // (Server needs to reload sessions from state.json)
+    window.location.reload();
   },
 
   loadState: async () => {
