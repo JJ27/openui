@@ -192,8 +192,6 @@ function AppContent() {
 
   // Keyboard shortcuts for canvas switching
   useEffect(() => {
-    const { canvases, addCanvas } = useStore.getState();
-
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if typing in input/textarea
       const target = e.target as HTMLElement;
@@ -204,6 +202,9 @@ function AppContent() {
       ) {
         return;
       }
+
+      // Get fresh state on each keypress to avoid stale closures
+      const { canvases, addCanvas } = useStore.getState();
 
       const isMod = e.metaKey || e.ctrlKey;
 

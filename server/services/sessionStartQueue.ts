@@ -85,7 +85,14 @@ async function processQueue(): Promise<void> {
       };
 
       // Actually start the session
-      next.startFn();
+      try {
+        next.startFn();
+      } catch (error) {
+        log(`\x1b[38;5;208m[start-queue]\x1b[0m startFn threw for ${next.sessionId}: ${error}`);
+        clearTimeout(timeoutHandle);
+        currentPending = null;
+        resolve();
+      }
     });
   }
 

@@ -172,13 +172,16 @@ export const useStore = create<AppState>((set) => ({
   },
 
   removeCanvas: (id) => {
-    set((state) => ({
-      canvases: state.canvases.filter((c) => c.id !== id),
-      activeCanvasId:
-        state.activeCanvasId === id
-          ? state.canvases[0]?.id
-          : state.activeCanvasId,
-    }));
+    set((state) => {
+      const remaining = state.canvases.filter((c) => c.id !== id);
+      return {
+        canvases: remaining,
+        activeCanvasId:
+          state.activeCanvasId === id
+            ? remaining[0]?.id
+            : state.activeCanvasId,
+      };
+    });
   },
 
   reorderCanvases: (canvasIds) => {
@@ -223,11 +226,16 @@ export const useStore = create<AppState>((set) => ({
     const session = state.sessions.get(nodeId);
     if (!session) return;
 
-    await fetch(`/api/sessions/${session.sessionId}/archive`, {
+    const res = await fetch(`/api/sessions/${session.sessionId}/archive`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ archived: true }),
     });
+
+    if (!res.ok) {
+      console.error("Failed to archive session: server returned", res.status);
+      return;
+    }
 
     // Remove from canvas
     set((state) => ({

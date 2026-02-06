@@ -206,6 +206,8 @@ export function Sidebar() {
                           // Force terminal recreation
                           setTerminalKey(k => k + 1);
                           updateSession(selectedNodeId!, { status: "running", isRestored: false });
+                        } else {
+                          console.error("Failed to resume session: server returned", res.status);
                         }
                       } catch (e) {
                         console.error("Failed to resume session:", e);

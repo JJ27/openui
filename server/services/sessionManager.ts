@@ -414,7 +414,7 @@ export function restoreSessions() {
   for (const node of state.nodes) {
     // Skip archived sessions - they should not be in the active sessions Map
     if (node.archived) {
-      console.log(`[restore] Skipping archived session: ${node.sessionId} (${node.customName})`);
+      log(`[restore] Skipping archived session: ${node.sessionId} (${node.customName})`);
       continue;
     }
     console.log(`[restore] Loading session: ${node.sessionId} (${node.customName}) archived=${node.archived}`);

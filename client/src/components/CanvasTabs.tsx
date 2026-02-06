@@ -20,9 +20,13 @@ export function CanvasTabs() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(newCanvas),
-    }).then(() => {
-      addCanvas(newCanvas);
-      setActiveCanvasId(newCanvas.id);
+    }).then((res) => {
+      if (res.ok) {
+        addCanvas(newCanvas);
+        setActiveCanvasId(newCanvas.id);
+      } else {
+        console.error("Failed to create canvas: server returned", res.status);
+      }
     });
   };
 

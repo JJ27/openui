@@ -119,7 +119,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               term.write(msg.data);
               // Scroll to bottom after content renders to show most recent output
               setTimeout(() => {
-                term.scrollToBottom();
+                if (mountedRef.current) term.scrollToBottom();
               }, 50);
             } else {
               term.write(msg.data);
