@@ -51,7 +51,7 @@ async function ensurePluginInstalled() {
   }
 }
 
-// Check for updates (non-blocking)
+// Check for updates via npm registry (non-blocking, for npm installs)
 async function checkForUpdates() {
   try {
     const res = await fetch("https://registry.npmjs.org/@fallom/openui/latest", {
@@ -68,6 +68,66 @@ async function checkForUpdates() {
     }
   } catch {
     // Silently ignore - don't block startup for version check
+  }
+}
+
+// Auto-update from git (for git clone installs)
+async function autoUpdateFromGit() {
+  if (process.argv.includes("--no-update")) return;
+
+  const gitDir = join(ROOT_DIR, ".git");
+  if (!existsSync(gitDir)) return; // Not a git clone (e.g. npm install)
+
+  const dataDir = join(homedir(), ".openui");
+  const buildCommitFile = join(dataDir, ".build-commit");
+
+  // Try to fetch + pull from origin
+  try {
+    await $`git -C ${ROOT_DIR} fetch origin main --quiet`.timeout(5000);
+
+    const behind = (await $`git -C ${ROOT_DIR} rev-list HEAD..origin/main --count`.text()).trim();
+    if (parseInt(behind) > 0) {
+      console.log(`\x1b[38;5;141m[update]\x1b[0m ${behind} new commit(s) available, pulling...`);
+      const result = await $`git -C ${ROOT_DIR} pull --ff-only origin main`.quiet();
+      if (result.exitCode !== 0) {
+        console.log(`\x1b[38;5;208m[update]\x1b[0m Could not auto-update (local changes?). Run 'git pull' manually.`);
+      } else {
+        console.log(`\x1b[38;5;82m[update]\x1b[0m Updated to latest version!`);
+      }
+    }
+  } catch {
+    // No internet or fetch failed — continue with current code
+  }
+
+  // Check if rebuild is needed
+  const currentHead = (await $`git -C ${ROOT_DIR} rev-parse HEAD`.text().catch(() => "")).trim();
+  if (!currentHead) return;
+
+  await $`mkdir -p ${dataDir}`.quiet();
+  const lastBuild = existsSync(buildCommitFile)
+    ? (await Bun.file(buildCommitFile).text().catch(() => "")).trim()
+    : "";
+
+  if (currentHead === lastBuild) return; // Build is up to date
+
+  console.log(`\x1b[38;5;141m[build]\x1b[0m Source code changed, rebuilding...`);
+
+  // Reinstall deps (package.json may have changed)
+  await $`cd ${ROOT_DIR} && bun install`.quiet();
+  await $`cd ${join(ROOT_DIR, "client")} && bun install`.quiet();
+
+  // Build client
+  const buildProc = Bun.spawn(["bun", "run", "build"], {
+    cwd: ROOT_DIR,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  await buildProc.exited;
+
+  if (buildProc.exitCode === 0) {
+    await Bun.write(buildCommitFile, currentHead);
+    console.log(`\x1b[38;5;82m[build]\x1b[0m Client rebuilt successfully!\n`);
+  } else {
+    console.error(`\x1b[38;5;196m[build]\x1b[0m Build failed. UI may be outdated.`);
   }
 }
 
@@ -113,11 +173,13 @@ console.log(`
 \x1b[38;5;245m                         Press Ctrl+C to stop\x1b[0m
 `);
 
-// Ensure plugin is installed and check for updates in background
+// Ensure plugin is installed, check for updates, and auto-update from git
 await ensurePluginInstalled();
 checkForUpdates();
+await autoUpdateFromGit();
 
-// Build client if dist directory doesn't exist
+// Fallback: build client if dist directory still doesn't exist
+// (e.g. first clone with --no-update, or non-git install)
 const clientDistPath = join(ROOT_DIR, "client", "dist");
 if (!existsSync(clientDistPath)) {
   console.log("\x1b[38;5;141m[build]\x1b[0m Building client for first run...");

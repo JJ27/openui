@@ -16,7 +16,7 @@ You want to run 8 Claude agents simultaneously - each working on different tasks
 
 OpenUI gives you a visual command center where each agent is a node on a canvas:
 
-- **At-a-glance status**: See which agents are working, idle, or need input
+- **At-a-glance status**: Header shows counts of working agents, agents needing input, and idle agents
 - **GitHub integration**: Start sessions from GitHub issues with automatic branch creation
 - **Branch isolation**: Each agent works in its own git worktree
 - **Organized workspace**: Tabs, custom colors, drag-and-drop layout
@@ -25,47 +25,56 @@ OpenUI gives you a visual command center where each agent is a node on a canvas:
 
 ## Installation
 
-### For Databricks (Internal Use)
+### Prerequisites
+- **Bun** (v1.0+) - Install with: `curl -fsSL https://bun.sh/install | bash`
+- **Claude Code** - Available via `llm agent claude` (Databricks) or `claude` (public)
+  - For Databricks: Already installed on dev machines
+  - For public: Install from [claude.com/claude-code](https://claude.com/claude-code)
 
-**Development Mode:**
+### Setup
+
 ```bash
-# Clone the fork
 git clone https://github.com/JJ27/openui.git
 cd openui
-
-# Install dependencies
-bun install
-cd client && bun install && cd ..
-
-# Run in development mode (starts on port 6969)
-bun run dev
+bun install && cd client && bun install && cd ..
+bun link
 ```
 
-**Production Mode (Recommended):**
+### Run
+
+From any project directory:
+
 ```bash
-# Clone and install
-git clone https://github.com/JJ27/openui.git
-cd openui
-bun install
-cd client && bun install && cd ..
-
-# Link globally
-bun link
-
-# Now you can run openui from any directory
 cd ~/your-project
 openui
 ```
 
-Then forward port 6969 from your dev machine to access the UI locally.
+The first run will automatically build the client. Open `http://localhost:6969` in your browser.
 
-**Prerequisites:**
-- `bun` - Install with: `curl -fsSL https://bun.sh/install | bash`
-- `llm agent` - Claude Code agent interface (already available on Databricks dev machines)
+If you're on a remote dev machine, forward port 6969 to access the UI locally.
+
+## Updating
+
+OpenUI auto-updates on startup. When you run `openui`, it will:
+1. Check for new commits on `origin/main`
+2. Pull changes automatically (fast-forward only)
+3. Rebuild the UI if source code changed
+
+No need to re-run `bun link` after updates - the symlink points to the repo directory.
+
+If auto-update fails (e.g. you have local changes), update manually:
+
+```bash
+cd /path/to/openui
+git pull
+openui  # will auto-rebuild
+```
+
+To skip auto-update: `openui --no-update`
 
 ## Quick Start
 
-1. Run `openui` (or `bun run dev` for development) in your project directory
+1. Run `openui` in your project directory
 2. Open `http://localhost:6969` in your browser
 3. Click "+" to spawn agents (Claude Code, OpenCode, or Ralph Loop)
 4. Click any node to open its terminal
@@ -87,8 +96,8 @@ Then forward port 6969 from your dev machine to access the UI locally.
 ### Session Management
 - **Auto-resume**: Sessions automatically restore on server restart with proper state
 - **Manual resume**: Resume disconnected sessions with preserved context
-- **Session persistence**: All sessions saved to `.openui/state.json`
-- **Archive**: Archive completed sessions to keep workspace clean while preserving history
+- **Session persistence**: All sessions saved to `~/.openui/state.json` (centralized in home directory)
+- **Archive/Unarchive**: Archive completed sessions to keep workspace clean while preserving full history. Toggle archive view to see archived sessions and unarchive them to restore
 
 ### GitHub Integration
 - Start sessions directly from GitHub issues
@@ -135,7 +144,7 @@ OpenUI runs a local server that:
 - Spawns PTY sessions for each AI agent
 - Tracks agent state via Claude Code plugin hooks
 - Streams terminal I/O over WebSocket
-- Persists everything to `.openui/` in your project
+- Persists everything to `~/.openui/` (centralized state in home directory)
 - Auto-resumes sessions on restart with proper state
 
 ### Agent Commands
@@ -157,6 +166,7 @@ By default, OpenUI uses `llm agent claude` to spawn Claude Code instances. This 
 
 ```
 openui/
+├── bin/              # CLI entry point (openui command)
 ├── server/           # Backend (Hono + WebSocket + PTY management)
 │   ├── routes/       # API routes
 │   ├── services/     # Session, persistence, auto-resume logic
@@ -166,11 +176,24 @@ openui/
 │       ├── components/  # React components
 │       ├── stores/      # Zustand state management
 │       └── App.tsx
-├── claude-code-plugin/  # Claude Code plugin for status tracking
-└── .openui/          # Runtime data (created in working directory)
-    ├── state.json    # Persisted sessions and canvas state
-    └── claude-code-plugin/  # Auto-installed plugin
+└── claude-code-plugin/  # Claude Code plugin for status tracking
+
+~/.openui/            # Runtime data (created in home directory)
+├── state.json        # Persisted sessions and canvas state
+├── buffers/          # Session output buffers
+├── .build-commit     # Git hash of last successful client build
+└── claude-code-plugin/  # Auto-installed plugin
 ```
+
+## Development
+
+For contributors working on OpenUI itself:
+
+```bash
+bun run dev  # Starts Vite HMR + server watch mode on port 6969
+```
+
+This runs Vite (hot module reload) and the server in watch mode concurrently. Changes to client code update instantly; server restarts on file changes.
 
 ### Testing with the Claude Code Plugin
 
@@ -180,13 +203,6 @@ You can also test manually:
 ```bash
 llm agent claude --plugin-dir $(pwd)/claude-code-plugin
 ```
-
-## Requirements
-
-- **Bun 1.0+**: JavaScript runtime and package manager
-- **Claude Code**: Available via `llm agent claude` (Databricks) or `claude` (public)
-  - For Databricks: Already installed on dev machines
-  - For public: Install from [claude.com/claude-code](https://claude.com/claude-code)
 
 ### Optional: Ralph Loop
 
@@ -224,11 +240,16 @@ When starting sessions from GitHub issues, OpenUI can automatically create git w
 - Click the "Resume" button to restart the session
 
 ### Port already in use
-- Change the port in `server/index.ts` or kill the process using port 6969
+- Change the port: `PORT=7000 openui`
+- Or kill the process using port 6969
 
 ### Plugin not working
 - Delete `~/.openui/claude-code-plugin/` and restart OpenUI to reinstall
 - Check plugin logs in the terminal output
+
+### UI looks outdated after `git pull`
+- Just run `openui` again - it auto-detects source changes and rebuilds
+- Or manually: `cd /path/to/openui && bun run build`
 
 ## License
 
