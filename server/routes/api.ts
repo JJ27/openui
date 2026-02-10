@@ -964,13 +964,13 @@ function saveConfig(config: Record<string, any>) {
   atomicWriteJson(configPath, config);
 }
 
-// GET /api/settings — read all user settings
-apiRoutes.get("/settings", (c) => {
+// GET /api/config — read all settings
+apiRoutes.get("/config", (c) => {
   return c.json(loadConfig());
 });
 
-// PUT /api/settings — merge user settings
-apiRoutes.put("/settings", async (c) => {
+// PUT /api/config — merge settings
+apiRoutes.put("/config", async (c) => {
   const updates = await c.req.json();
   const config = loadConfig();
   Object.assign(config, updates);

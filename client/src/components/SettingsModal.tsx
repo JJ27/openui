@@ -17,7 +17,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   // Load existing config
   useEffect(() => {
     if (open) {
-      fetch("/api/settings")
+      fetch("/api/config")
         .then((res) => res.json())
         .then((config) => {
           setDefaultBaseBranch(config.defaultBaseBranch || "main");
@@ -32,7 +32,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setIsSaving(true);
 
     try {
-      await fetch("/api/settings", {
+      await fetch("/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
