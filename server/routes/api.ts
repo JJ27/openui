@@ -460,37 +460,48 @@ apiRoutes.post("/status-update", async (c) => {
     let effectiveStatus = status;
 
     if (status === "pre_tool") {
-      // PreToolUse fired - tool is about to run (or waiting for permission)
-      // Stay as running, track the tool
-      effectiveStatus = "running";
-      session.currentTool = toolName;
-      session.preToolTime = Date.now();
-
-      // Clear any existing permission timeout
-      if (session.permissionTimeout) {
-        clearTimeout(session.permissionTimeout);
-      }
-
-      // Tool-specific timeout: Bash commands can run for a long time,
-      // so don't use timeout-based permission detection for them.
-      // For other tools, if post_tool doesn't arrive within 2.5s, assume waiting for permission.
-      const longRunningTools = ["Bash", "Task"];
-      if (!longRunningTools.includes(toolName)) {
-        session.permissionTimeout = setTimeout(() => {
-          // Only switch to waiting_input if we haven't received post_tool yet
-          if (session.preToolTime) {
-            session.status = "waiting_input";
-            broadcastToSession(session, {
-              type: "status",
-              status: "waiting_input",
-              isRestored: session.isRestored,
-              currentTool: session.currentTool,
-              hookEvent: "permission_timeout",
-            });
-          }
-        }, 2500);
+      // AskUserQuestion means the agent needs user input, not "working"
+      // (Both the specific AskUserQuestion matcher and wildcard * fire in parallel,
+      // so this server-side check ensures the correct status regardless of arrival order)
+      if (toolName === "AskUserQuestion") {
+        effectiveStatus = "waiting_input";
+        session.currentTool = toolName;
+        if (session.permissionTimeout) {
+          clearTimeout(session.permissionTimeout);
+          session.permissionTimeout = undefined;
+        }
       } else {
-        session.permissionTimeout = undefined;
+        // PreToolUse fired - tool is about to run (or waiting for permission)
+        effectiveStatus = "running";
+        session.currentTool = toolName;
+        session.preToolTime = Date.now();
+
+        // Clear any existing permission timeout
+        if (session.permissionTimeout) {
+          clearTimeout(session.permissionTimeout);
+        }
+
+        // Tool-specific timeout: Bash commands can run for a long time,
+        // so don't use timeout-based permission detection for them.
+        // For other tools, if post_tool doesn't arrive within 2.5s, assume waiting for permission.
+        const longRunningTools = ["Bash", "Task"];
+        if (!longRunningTools.includes(toolName)) {
+          session.permissionTimeout = setTimeout(() => {
+            // Only switch to waiting_input if we haven't received post_tool yet
+            if (session.preToolTime) {
+              session.status = "waiting_input";
+              broadcastToSession(session, {
+                type: "status",
+                status: "waiting_input",
+                isRestored: session.isRestored,
+                currentTool: session.currentTool,
+                hookEvent: "permission_timeout",
+              });
+            }
+          }, 2500);
+        } else {
+          session.permissionTimeout = undefined;
+        }
       }
     } else if (status === "post_tool") {
       // PostToolUse fired - tool completed, clear the permission timeout

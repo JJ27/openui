@@ -18,6 +18,7 @@ import {
   Github,
   Brain,
   History,
+  ChevronDown,
 } from "lucide-react";
 import { useReactFlow } from "@xyflow/react";
 import { useStore, Agent, AgentSession } from "../stores/useStore";
@@ -174,6 +175,7 @@ export function NewSessionModal({
   const [branchName, setBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("main");
   const [createWorktree, setCreateWorktree] = useState(true);
+  const [showBranchOptions, setShowBranchOptions] = useState(false);
 
   // Directory picker state
   const [showDirPicker, setShowDirPicker] = useState(false);
@@ -381,11 +383,14 @@ export function NewSessionModal({
             nodeId: existingNodeId,
             customName: customName || existingSession.customName,
             customColor: existingSession.customColor,
-            // Ticket info if selected (GitHub)
+            // Ticket info (GitHub tab)
             ...(selectedGithubIssue && {
               ticketId: `#${selectedGithubIssue.number}`,
               ticketTitle: selectedGithubIssue.title,
               ticketUrl: selectedGithubIssue.url,
+            }),
+            // Worktree info (both GitHub and Blank tabs)
+            ...(branchName && {
               branchName,
               baseBranch,
               createWorktree,
@@ -439,11 +444,14 @@ export function NewSessionModal({
               cwd: workingDir,
               nodeId,
               customName: count > 1 ? agentName : customName || undefined,
-              // Ticket info if selected (only for first agent)
+              // Ticket info (GitHub tab, first agent only)
               ...(i === 0 && selectedGithubIssue && {
                 ticketId: `#${selectedGithubIssue.number}`,
                 ticketTitle: selectedGithubIssue.title,
                 ticketUrl: selectedGithubIssue.url,
+              }),
+              // Worktree info (both GitHub and Blank tabs, first agent only)
+              ...(i === 0 && branchName && {
                 branchName,
                 baseBranch,
                 createWorktree,
@@ -534,6 +542,10 @@ export function NewSessionModal({
                     onClick={() => {
                       setActiveTab("blank");
                       setSelectedGithubIssue(null);
+                      setBranchName("");
+                      setBaseBranch("main");
+                      setCreateWorktree(true);
+                      setShowBranchOptions(false);
                     }}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                       activeTab === "blank"
@@ -546,6 +558,10 @@ export function NewSessionModal({
                   <button
                     onClick={() => {
                       setActiveTab("github");
+                      setBranchName("");
+                      setBaseBranch("main");
+                      setCreateWorktree(true);
+                      setShowBranchOptions(false);
                     }}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
                       activeTab === "github"
@@ -560,6 +576,8 @@ export function NewSessionModal({
                     onClick={() => {
                       setActiveTab("resume");
                       setSelectedGithubIssue(null);
+                      setBranchName("");
+                      setShowBranchOptions(false);
                       // Load projects and recent conversations on first open
                       if (resumeProjects.length === 0) loadResumeProjects();
                       if (resumeConversations.length === 0) searchResumeConversations("");
@@ -1081,6 +1099,77 @@ export function NewSessionModal({
                       </div>
                     )}
                   </div>
+
+                  {/* Git Branch / Worktree options (Blank tab only) */}
+                  {activeTab === "blank" && (
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowBranchOptions(!showBranchOptions)}
+                        className="w-full flex items-center justify-between px-3 py-2 rounded-md bg-canvas border border-border hover:border-zinc-500 transition-colors group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <GitBranch className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-400" />
+                          <span className="text-sm text-zinc-400 group-hover:text-zinc-300">
+                            Git Branch (optional)
+                          </span>
+                        </div>
+                        <ChevronDown
+                          className={`w-4 h-4 text-zinc-500 transition-transform ${showBranchOptions ? "rotate-180" : ""}`}
+                        />
+                      </button>
+
+                      {showBranchOptions && (
+                        <div className="pl-3 space-y-3 border-l-2 border-zinc-700/50">
+                          <div>
+                            <label className="text-xs text-zinc-500 mb-1.5 block">Branch name</label>
+                            <input
+                              type="text"
+                              value={branchName}
+                              onChange={(e) => setBranchName(e.target.value)}
+                              placeholder="feature/my-branch"
+                              className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                            />
+                          </div>
+
+                          {branchName && (
+                            <>
+                              <div>
+                                <label className="text-xs text-zinc-500 mb-1.5 block">Base branch</label>
+                                <input
+                                  type="text"
+                                  value={baseBranch}
+                                  onChange={(e) => setBaseBranch(e.target.value)}
+                                  placeholder="main"
+                                  className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                                />
+                              </div>
+
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={createWorktree}
+                                  onChange={(e) => setCreateWorktree(e.target.checked)}
+                                  className="w-4 h-4 rounded border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
+                                />
+                                <span className="text-sm text-zinc-300">Create git worktree</span>
+                              </label>
+
+                              <div className="flex items-start gap-2 px-3 py-2 rounded bg-zinc-900/50 border border-zinc-800">
+                                <AlertCircle className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
+                                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                  Files will be isolated in a separate directory at{" "}
+                                  <code className="text-zinc-400">
+                                    {(cwd || launchCwd || "repo").split("/").pop()}-worktrees/{branchName.replace(/\//g, "-")}
+                                  </code>
+                                </p>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Footer */}
