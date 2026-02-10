@@ -671,27 +671,28 @@ apiRoutes.post("/status-update", async (c) => {
           clearTimeout(session.permissionTimeout);
         }
 
-        // Tool-specific timeout: Bash commands can run for a long time,
-        // so don't use timeout-based permission detection for them.
-        // For other tools, if post_tool doesn't arrive within 2.5s, assume waiting for permission.
-        const longRunningTools = ["Bash", "Task"];
-        if (!longRunningTools.includes(toolName)) {
-          session.permissionTimeout = setTimeout(() => {
-            // Only switch to waiting_input if we haven't received post_tool yet
-            if (session.preToolTime) {
-              session.status = "waiting_input";
-              broadcastToSession(session, {
-                type: "status",
-                status: "waiting_input",
-                isRestored: session.isRestored,
-                currentTool: session.currentTool,
-                hookEvent: "permission_timeout",
-              });
+        // If post_tool doesn't arrive within 2.5s, the tool may be waiting for permission.
+        // For Bash/Task, also check PTY output — if the command is running (auto-allowed),
+        // it produces terminal output. No output after PreToolUse = likely waiting for permission.
+        const preToolTimestamp = session.preToolTime!;
+        session.permissionTimeout = setTimeout(() => {
+          // Only switch to waiting_input if we haven't received post_tool yet
+          if (session.preToolTime) {
+            const longRunningTools = ["Bash", "Task"];
+            if (longRunningTools.includes(toolName) && session.lastOutputTime > preToolTimestamp) {
+              // Tool is running and producing output — not waiting for permission
+              return;
             }
-          }, 2500);
-        } else {
-          session.permissionTimeout = undefined;
-        }
+            session.status = "waiting_input";
+            broadcastToSession(session, {
+              type: "status",
+              status: "waiting_input",
+              isRestored: session.isRestored,
+              currentTool: session.currentTool,
+              hookEvent: "permission_timeout",
+            });
+          }
+        }, 2500);
 
         // Long-running tool detection: if a single tool runs > 5 min, flag it
         if (session.longRunningTimeout) {
@@ -743,6 +744,13 @@ apiRoutes.post("/status-update", async (c) => {
         clearTimeout(session.longRunningTimeout);
         session.longRunningTimeout = undefined;
       }
+    }
+
+    // Once Stop fires (idle), only a new user message (UserPromptSubmit) should
+    // flip status back to running. Late events like SubagentStop or missing
+    // PostToolUse for parallel calls should not override idle.
+    if (session.status === "idle" && effectiveStatus === "running" && hookEvent !== "UserPromptSubmit") {
+      effectiveStatus = "idle";
     }
 
     session.status = effectiveStatus;
