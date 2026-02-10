@@ -20,14 +20,7 @@ app.use("*", cors());
 // API Routes
 app.route("/api", apiRoutes);
 
-// Serve static files (no-cache on index.html so browser always gets fresh asset references)
-app.use("/*", async (c, next) => {
-  await next();
-  const path = new URL(c.req.url).pathname;
-  if (path === "/" || path === "/index.html") {
-    c.header("Cache-Control", "no-cache");
-  }
-});
+// Serve static files
 app.use("/*", serveStatic({ root: "./client/dist" }));
 
 // Restore sessions BEFORE starting server so API requests find populated sessions Map
