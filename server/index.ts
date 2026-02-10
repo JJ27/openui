@@ -20,15 +20,8 @@ app.use("*", cors());
 // API Routes
 app.route("/api", apiRoutes);
 
-// Serve static files (no-cache on index.html so browser always gets fresh asset references)
-app.use("/*", serveStatic({
-  root: "./client/dist",
-  onFound: (path, c) => {
-    if (path.endsWith("index.html")) {
-      c.header("Cache-Control", "no-cache");
-    }
-  },
-}));
+// Serve static files
+app.use("/*", serveStatic({ root: "./client/dist" }));
 
 // Restore sessions BEFORE starting server so API requests find populated sessions Map
 const migrationResult = migrateStateToHome();

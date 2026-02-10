@@ -5,7 +5,6 @@ import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanv
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { join } from "path";
 import { homedir } from "os";
-import { existsSync, readFileSync } from "fs";
 
 const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
 const QUIET = !!process.env.OPENUI_QUIET;
@@ -663,26 +662,6 @@ apiRoutes.post("/status-update", async (c) => {
         } else {
           session.permissionTimeout = undefined;
         }
-
-        // Long-running tool detection: if a single tool runs > 5 min, flag it
-        if (session.longRunningTimeout) {
-          clearTimeout(session.longRunningTimeout);
-        }
-        session.longRunningTool = false;
-        session.longRunningTimeout = setTimeout(() => {
-          if (session.preToolTime) {
-            session.longRunningTool = true;
-            broadcastToSession(session, {
-              type: "status",
-              status: session.status,
-              isRestored: session.isRestored,
-              currentTool: session.currentTool,
-              hookEvent: "long_running_tool",
-              gitBranch: session.gitBranch,
-              longRunningTool: true,
-            });
-          }
-        }, 5 * 60 * 1000);
       }
     } else if (status === "post_tool") {
       // PostToolUse fired - tool completed, clear the permission timeout
@@ -691,11 +670,6 @@ apiRoutes.post("/status-update", async (c) => {
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
-      }
-      session.longRunningTool = false;
-      if (session.longRunningTimeout) {
-        clearTimeout(session.longRunningTimeout);
-        session.longRunningTimeout = undefined;
       }
       // Keep currentTool to show what just ran
     } else {
@@ -707,11 +681,6 @@ apiRoutes.post("/status-update", async (c) => {
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
-      }
-      session.longRunningTool = false;
-      if (session.longRunningTimeout) {
-        clearTimeout(session.longRunningTimeout);
-        session.longRunningTimeout = undefined;
       }
     }
 
@@ -738,7 +707,6 @@ apiRoutes.post("/status-update", async (c) => {
       currentTool: session.currentTool,
       hookEvent: hookEvent,
       gitBranch: session.gitBranch,
-      longRunningTool: session.longRunningTool || false,
     });
 
     return c.json({ success: true });
@@ -945,35 +913,4 @@ apiRoutes.get("/claude/projects", (c) => {
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
   }
-});
-
-// ============ Config (Settings) ============
-
-const configPath = join(getDataDir(), "config.json");
-
-function loadConfig(): Record<string, any> {
-  try {
-    if (existsSync(configPath)) {
-      return JSON.parse(readFileSync(configPath, "utf8"));
-    }
-  } catch {}
-  return {};
-}
-
-function saveConfig(config: Record<string, any>) {
-  atomicWriteJson(configPath, config);
-}
-
-// GET /api/config — read all settings
-apiRoutes.get("/config", (c) => {
-  return c.json(loadConfig());
-});
-
-// PUT /api/config — merge settings
-apiRoutes.put("/config", async (c) => {
-  const updates = await c.req.json();
-  const config = loadConfig();
-  Object.assign(config, updates);
-  saveConfig(config);
-  return c.json(config);
 });

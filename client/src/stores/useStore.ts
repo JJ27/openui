@@ -42,8 +42,6 @@ export interface AgentSession {
   ticketTitle?: string;
   // Current tool being used (from plugin)
   currentTool?: string;
-  // Whether the current tool has been running for a long time (> 5 min)
-  longRunningTool?: boolean;
   // Archive status
   archived?: boolean;
 }

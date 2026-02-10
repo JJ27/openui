@@ -1,4 +1,4 @@
-import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock } from "lucide-react";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench } from "lucide-react";
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
@@ -39,7 +39,6 @@ interface AgentNodeCardProps {
   gitBranch?: string;
   ticketId?: string;
   ticketTitle?: string;
-  longRunningTool?: boolean;
 }
 
 export function AgentNodeCard({
@@ -55,7 +54,6 @@ export function AgentNodeCard({
   gitBranch,
   ticketId,
   ticketTitle,
-  longRunningTool,
 }: AgentNodeCardProps) {
   // agentId is available for future use if needed
   void agentId;
@@ -140,14 +138,8 @@ export function AgentNodeCard({
           <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
             {statusInfo.label}
           </span>
-          {/* Show long-running indicator or current tool */}
-          {longRunningTool && (
-            <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-              <Clock className="w-2.5 h-2.5" />
-              Long task
-            </span>
-          )}
-          {isToolCalling && toolDisplay && !longRunningTool && (
+          {/* Show current tool when tool_calling */}
+          {isToolCalling && toolDisplay && (
             <span className="text-[10px] text-zinc-400 flex items-center gap-1">
               <Wrench className="w-2.5 h-2.5" />
               {toolDisplay}
