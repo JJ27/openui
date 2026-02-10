@@ -3,6 +3,9 @@ import { useStore, AgentSession } from "../../stores/useStore";
 
 interface AgentNodeData {
   sessionId: string;
+  agentId?: string;
+  color?: string;
+  icon?: string;
 }
 
 export function useAgentNodeState(
@@ -10,7 +13,7 @@ export function useAgentNodeState(
   nodeData: AgentNodeData,
   session: AgentSession | undefined
 ) {
-  const { removeNode, removeSession, setSelectedNodeId, setSidebarOpen } =
+  const { removeNode, removeSession, setSelectedNodeId, setSidebarOpen, addNode, addSession } =
     useStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -49,6 +52,61 @@ export function useAgentNodeState(
     setSidebarOpen(false);
   };
 
+  const handleFork = async () => {
+    const sessionId = session?.sessionId || nodeData.sessionId;
+    if (!sessionId) return;
+
+    // Get parent node position
+    const parentNode = useStore.getState().nodes.find(n => n.id === id);
+    const parentPos = parentNode?.position || { x: 0, y: 0 };
+    const forkPos = { x: parentPos.x + 250, y: parentPos.y + 60 };
+    const activeCanvasId = useStore.getState().activeCanvasId;
+
+    const res = await fetch(`/api/sessions/${sessionId}/fork`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ position: forkPos, canvasId: activeCanvasId }),
+    });
+
+    if (!res.ok) return;
+
+    const data = await res.json();
+
+    addNode({
+      id: data.nodeId,
+      type: "agent",
+      position: forkPos,
+      data: {
+        label: data.customName || "Fork",
+        agentId: data.agentId || session?.agentId || "claude",
+        color: data.customColor || session?.customColor || session?.color || nodeData.color || "#22C55E",
+        icon: nodeData.icon || "sparkles",
+        sessionId: data.sessionId,
+      },
+    });
+
+    addSession(data.nodeId, {
+      id: data.nodeId,
+      sessionId: data.sessionId,
+      agentId: data.agentId || session?.agentId || "claude",
+      agentName: data.agentName || session?.agentName || "Claude Code",
+      command: session?.command || "llm agent claude",
+      color: data.customColor || session?.customColor || session?.color || "#22C55E",
+      createdAt: new Date().toISOString(),
+      cwd: data.cwd || session?.cwd || "",
+      originalCwd: data.originalCwd,
+      gitBranch: data.gitBranch,
+      status: "running",
+      customName: data.customName,
+      customColor: data.customColor,
+    });
+
+    setSelectedNodeId(data.nodeId);
+    setSidebarOpen(true);
+  };
+
+  const canFork = session?.agentId === "claude";
+
   const closeContextMenu = () => {
     setContextMenu(null);
   };
@@ -57,6 +115,8 @@ export function useAgentNodeState(
     contextMenu,
     handleContextMenu,
     handleDelete,
+    handleFork,
+    canFork,
     closeContextMenu,
   };
 }

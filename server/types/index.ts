@@ -47,6 +47,8 @@ export interface Session {
   archived?: boolean;
   // Canvas/tab organization
   canvasId?: string;
+  // Runtime-only: throttle git branch checks
+  _lastBranchCheck?: number;
 }
 
 export interface PersistedNode {
@@ -66,6 +68,14 @@ export interface PersistedNode {
   archived?: boolean;
   autoResumed?: boolean;  // True if session was auto-resumed on startup
   canvasId: string;  // Canvas/tab this agent belongs to
+  // Worktree/git metadata
+  worktreePath?: string;
+  originalCwd?: string;
+  gitBranch?: string;
+  // Ticket/Issue info
+  ticketId?: string;
+  ticketTitle?: string;
+  ticketUrl?: string;
 }
 
 export interface PersistedCategory {

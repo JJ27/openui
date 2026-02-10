@@ -72,7 +72,7 @@ export function injectPluginDir(command: string, agentId: string): string {
 }
 
 // Get git branch for a directory
-function getGitBranch(cwd: string): string | null {
+export function getGitBranch(cwd: string): string | null {
   try {
     const result = spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
       cwd,
@@ -133,7 +133,7 @@ export function createWorktree(params: {
   cwd: string;
   branchName: string;
   baseBranch: string;
-}): { success: boolean; worktreePath?: string; error?: string } {
+}): { success: boolean; worktreePath?: string; branchName?: string; error?: string } {
   const { cwd, branchName, baseBranch } = params;
   const gitRoot = getGitRoot(cwd);
 
@@ -149,28 +149,32 @@ export function createWorktree(params: {
     mkdirSync(worktreesDir, { recursive: true });
   }
 
-  // Sanitize branch name for directory
-  const dirName = branchName.replace(/\//g, "-");
-  const worktreePath = join(worktreesDir, dirName);
-
-  // Check if worktree already exists
-  if (existsSync(worktreePath)) {
-    log(`\x1b[38;5;141m[worktree]\x1b[0m Worktree already exists: ${worktreePath}`);
-    return { success: true, worktreePath };
+  // Sanitize branch name for directory and find unique path
+  const baseDirName = branchName.replace(/\//g, "-");
+  let finalDirName = baseDirName;
+  let finalBranchName = branchName;
+  let worktreePath = join(worktreesDir, finalDirName);
+  let suffix = 2;
+  while (existsSync(worktreePath)) {
+    finalBranchName = `${branchName}-${suffix}`;
+    finalDirName = `${baseDirName}-${suffix}`;
+    worktreePath = join(worktreesDir, finalDirName);
+    suffix++;
   }
 
   // Fetch latest from remote first
   log(`\x1b[38;5;141m[worktree]\x1b[0m Fetching from remote...`);
   spawnSync(["git", "fetch", "origin"], { cwd: gitRoot, stdout: "pipe", stderr: "pipe" });
 
-  // Check if branch exists locally or remotely
-  const localBranch = spawnSync(["git", "rev-parse", "--verify", branchName], {
+  // Check if the original branch exists locally or remotely
+  // (only relevant when no suffix was added; suffixed branches are always new)
+  const localBranch = spawnSync(["git", "rev-parse", "--verify", finalBranchName], {
     cwd: gitRoot,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const remoteBranch = spawnSync(["git", "rev-parse", "--verify", `origin/${branchName}`], {
+  const remoteBranch = spawnSync(["git", "rev-parse", "--verify", `origin/${finalBranchName}`], {
     cwd: gitRoot,
     stdout: "pipe",
     stderr: "pipe",
@@ -179,24 +183,24 @@ export function createWorktree(params: {
   let result;
   if (localBranch.exitCode === 0) {
     // Branch exists locally, just add worktree
-    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree for existing branch: ${branchName}`);
-    result = spawnSync(["git", "worktree", "add", worktreePath, branchName], {
+    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree for existing branch: ${finalBranchName}`);
+    result = spawnSync(["git", "worktree", "add", worktreePath, finalBranchName], {
       cwd: gitRoot,
       stdout: "pipe",
       stderr: "pipe",
     });
   } else if (remoteBranch.exitCode === 0) {
     // Branch exists on remote, track it
-    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree tracking remote branch: ${branchName}`);
-    result = spawnSync(["git", "worktree", "add", "--track", "-b", branchName, worktreePath, `origin/${branchName}`], {
+    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree tracking remote branch: ${finalBranchName}`);
+    result = spawnSync(["git", "worktree", "add", "--track", "-b", finalBranchName, worktreePath, `origin/${finalBranchName}`], {
       cwd: gitRoot,
       stdout: "pipe",
       stderr: "pipe",
     });
   } else {
     // Create new branch from base
-    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating new worktree with branch: ${branchName} from ${baseBranch}`);
-    result = spawnSync(["git", "worktree", "add", "-b", branchName, worktreePath, `origin/${baseBranch}`], {
+    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating new worktree with branch: ${finalBranchName} from ${baseBranch}`);
+    result = spawnSync(["git", "worktree", "add", "-b", finalBranchName, worktreePath, `origin/${baseBranch}`], {
       cwd: gitRoot,
       stdout: "pipe",
       stderr: "pipe",
@@ -209,8 +213,8 @@ export function createWorktree(params: {
     return { success: false, error: stderr };
   }
 
-  log(`\x1b[38;5;141m[worktree]\x1b[0m Created worktree at: ${worktreePath}`);
-  return { success: true, worktreePath };
+  log(`\x1b[38;5;141m[worktree]\x1b[0m Created worktree at: ${worktreePath} (branch: ${finalBranchName})`);
+  return { success: true, worktreePath, branchName: finalBranchName };
 }
 
 
@@ -284,7 +288,7 @@ export function createSession(params: {
       workingDir = result.worktreePath;
       worktreePath = result.worktreePath;
       mainRepoPath = originalCwd; // The original cwd is the main repo
-      gitBranch = branchName;
+      gitBranch = result.branchName || branchName;
       log(`\x1b[38;5;141m[session]\x1b[0m Using worktree: ${workingDir}, main repo: ${mainRepoPath}`);
     } else {
       logError(`\x1b[38;5;141m[session]\x1b[0m Failed to create worktree:`, result.error);
@@ -426,16 +430,25 @@ export function restoreSessions() {
     }
     console.log(`[restore] Loading session: ${node.sessionId} (${node.customName}) archived=${node.archived}`);
 
+    // Validate worktree directory still exists
+    let cwd = node.cwd;
+    if (node.worktreePath && !existsSync(node.worktreePath)) {
+      log(`\x1b[38;5;208m[restore]\x1b[0m Worktree deleted: ${node.worktreePath}, falling back to ${node.originalCwd || node.cwd}`);
+      cwd = node.originalCwd || node.cwd;
+    }
+
     const buffer = loadBuffer(node.sessionId);
-    const gitBranch = getGitBranch(node.cwd);
+    const gitBranch = getGitBranch(cwd);
 
     const session: Session = {
       pty: null,
       agentId: node.agentId,
       agentName: node.agentName,
       command: node.command,
-      cwd: node.cwd,
-      gitBranch: gitBranch || undefined,
+      cwd,
+      originalCwd: node.originalCwd,
+      worktreePath: node.worktreePath,
+      gitBranch: gitBranch || node.gitBranch || undefined,
       createdAt: node.createdAt,
       clients: new Set(),
       outputBuffer: buffer,
@@ -452,6 +465,9 @@ export function restoreSessions() {
       claudeSessionId: node.claudeSessionId,  // Restore Claude session ID for --resume
       archived: false,  // Active sessions are never archived
       canvasId: node.canvasId,  // Canvas/tab this agent belongs to
+      ticketId: node.ticketId,
+      ticketTitle: node.ticketTitle,
+      ticketUrl: node.ticketUrl,
     };
 
     sessions.set(node.sessionId, session);

@@ -1,16 +1,20 @@
 import { createPortal } from "react-dom";
-import { Trash2 } from "lucide-react";
+import { Trash2, GitFork } from "lucide-react";
 
 interface AgentNodeContextMenuProps {
   position: { x: number; y: number };
   onClose: () => void;
   onDelete: () => void;
+  onFork?: () => void;
+  showFork?: boolean;
 }
 
 export function AgentNodeContextMenu({
   position,
   onClose,
   onDelete,
+  onFork,
+  showFork,
 }: AgentNodeContextMenuProps) {
   return createPortal(
     <div
@@ -22,6 +26,18 @@ export function AgentNodeContextMenu({
         borderColor: "#333",
       }}
     >
+      {showFork && onFork && (
+        <button
+          onClick={() => {
+            onFork();
+            onClose();
+          }}
+          className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-white/5 flex items-center gap-2"
+        >
+          <GitFork className="w-3.5 h-3.5" />
+          Fork
+        </button>
+      )}
       <button
         onClick={() => {
           onDelete();

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE } from "../services/sessionManager";
-import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson } from "../services/persistence";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch } from "../services/sessionManager";
+import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { join } from "path";
 import { homedir } from "os";
@@ -125,15 +125,15 @@ apiRoutes.get("/sessions", (c) => {
         command: node.command,
         createdAt: node.createdAt,
         cwd: node.cwd,
-        originalCwd: undefined,
-        gitBranch: undefined,
+        originalCwd: node.originalCwd,
+        gitBranch: node.gitBranch,
         status: "disconnected",
         customName: node.customName,
         customColor: node.customColor,
         notes: node.notes,
         isRestored: false,
         ticketId: node.ticketId,
-        ticketTitle: node.ticketUrl,
+        ticketTitle: node.ticketTitle,
         canvasId: node.canvasId,
       }));
     return c.json(archivedSessions);
@@ -272,8 +272,48 @@ apiRoutes.post("/sessions", async (c) => {
 
 apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   const sessionId = c.req.param("sessionId");
-  const session = sessions.get(sessionId);
-  if (!session) return c.json({ error: "Session not found" }, 404);
+  let session = sessions.get(sessionId);
+
+  // If not in active sessions, check archived sessions in state.json
+  if (!session) {
+    const state = loadState();
+    const archivedNode = state.nodes.find(n => n.sessionId === sessionId && n.archived);
+    if (!archivedNode) return c.json({ error: "Session not found" }, 404);
+
+    // Restore archived session into the sessions Map
+    const buffer = loadBuffer(sessionId);
+    session = {
+      pty: null,
+      agentId: archivedNode.agentId,
+      agentName: archivedNode.agentName,
+      command: archivedNode.command,
+      cwd: archivedNode.cwd,
+      originalCwd: archivedNode.originalCwd,
+      worktreePath: archivedNode.worktreePath,
+      gitBranch: archivedNode.gitBranch || getGitBranch(archivedNode.cwd) || undefined,
+      createdAt: archivedNode.createdAt,
+      clients: new Set(),
+      outputBuffer: buffer,
+      status: "disconnected",
+      lastOutputTime: 0,
+      lastInputTime: 0,
+      recentOutputSize: 0,
+      customName: archivedNode.customName,
+      customColor: archivedNode.customColor,
+      notes: archivedNode.notes,
+      nodeId: archivedNode.nodeId,
+      isRestored: true,
+      claudeSessionId: archivedNode.claudeSessionId,
+      archived: false,
+      canvasId: archivedNode.canvasId,
+      ticketId: archivedNode.ticketId,
+      ticketTitle: archivedNode.ticketTitle,
+      ticketUrl: archivedNode.ticketUrl,
+    };
+    sessions.set(sessionId, session);
+    log(`\x1b[38;5;141m[restart]\x1b[0m Restored archived session ${sessionId} into sessions Map`);
+  }
+
   if (session.pty) return c.json({ error: "Session already running" }, 400);
 
   const startFn = async () => {
@@ -344,6 +384,126 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   startFn();
 
   return c.json({ success: true });
+});
+
+// Fork a Claude session (creates new node with --fork-session)
+apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  // Only Claude sessions with a known claudeSessionId can be forked
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (session.agentId !== "claude" || !session.claudeSessionId || !UUID_RE.test(session.claudeSessionId)) {
+    return c.json({ error: "Session cannot be forked (not a Claude session or no session ID yet)" }, 400);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const position = body.position || { x: 0, y: 0 };
+  const canvasId = body.canvasId || session.canvasId;
+
+  // Generate new IDs
+  const now = Date.now();
+  const newSessionId = `session-${now}-${Math.random().toString(36).slice(2, 8)}`;
+  const newNodeId = `node-${now}-0`;
+
+  const parentName = session.customName || session.agentName || "Agent";
+  const customName = `${parentName} (fork)`;
+
+  const { spawn } = await import("bun-pty");
+  const ptyProcess = spawn("/bin/bash", [], {
+    name: "xterm-256color",
+    cwd: session.cwd,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      OPENUI_SESSION_ID: newSessionId,
+    },
+    rows: 30,
+    cols: 120,
+  });
+
+  const newSession = {
+    pty: ptyProcess,
+    agentId: session.agentId,
+    agentName: session.agentName,
+    command: session.command,  // Base command only — no --fork-session
+    cwd: session.cwd,
+    originalCwd: session.originalCwd,
+    worktreePath: session.worktreePath,
+    gitBranch: session.gitBranch,
+    createdAt: new Date().toISOString(),
+    clients: new Set() as any,
+    outputBuffer: [] as string[],
+    status: "running" as const,
+    lastOutputTime: Date.now(),
+    lastInputTime: 0,
+    recentOutputSize: 0,
+    customName,
+    customColor: session.customColor,
+    nodeId: newNodeId,
+    isRestored: false,
+    autoResumed: false,
+    claudeSessionId: undefined,  // Plugin will report the new forked session ID
+    archived: false,
+    canvasId,
+    position,
+    ticketId: session.ticketId,
+    ticketTitle: session.ticketTitle,
+    ticketUrl: session.ticketUrl,
+  };
+
+  sessions.set(newSessionId, newSession);
+
+  const resetInterval = setInterval(() => {
+    if (!sessions.has(newSessionId) || !newSession.pty) {
+      clearInterval(resetInterval);
+      return;
+    }
+    newSession.recentOutputSize = Math.max(0, newSession.recentOutputSize - 50);
+  }, 500);
+
+  ptyProcess.onData((data: string) => {
+    newSession.outputBuffer.push(data);
+    if (newSession.outputBuffer.length > MAX_BUFFER_SIZE) {
+      newSession.outputBuffer.shift();
+    }
+    newSession.lastOutputTime = Date.now();
+    newSession.recentOutputSize += data.length;
+    broadcastToSession(newSession, { type: "output", data });
+  });
+
+  // Build the fork command: inject plugin-dir, then --resume <id> --fork-session
+  let finalCommand = injectPluginDir(session.command, session.agentId);
+  finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
+  const forkArg = `--resume ${session.claudeSessionId} --fork-session`;
+  if (finalCommand.includes("llm agent claude")) {
+    finalCommand = finalCommand.replace("llm agent claude", `llm agent claude ${forkArg}`);
+  } else if (finalCommand.startsWith("claude")) {
+    finalCommand = finalCommand.replace(/^claude(\s|$)/, `claude ${forkArg}$1`);
+  }
+
+  setTimeout(() => {
+    ptyProcess.write(`${finalCommand}\r`);
+  }, 300);
+
+  saveState(sessions);
+
+  log(`\x1b[38;5;141m[session]\x1b[0m Forked ${sessionId} -> ${newSessionId} (claude session: ${session.claudeSessionId})`);
+
+  return c.json({
+    sessionId: newSessionId,
+    nodeId: newNodeId,
+    cwd: session.cwd,
+    originalCwd: session.originalCwd,
+    worktreePath: session.worktreePath,
+    gitBranch: session.gitBranch,
+    canvasId,
+    customName,
+    agentId: session.agentId,
+    agentName: session.agentName,
+    customColor: session.customColor,
+  });
 });
 
 apiRoutes.patch("/sessions/:sessionId", async (c) => {
@@ -529,6 +689,16 @@ apiRoutes.post("/status-update", async (c) => {
     session.lastPluginStatusTime = Date.now();
     session.lastHookEvent = hookEvent;
 
+    // Dynamic branch detection: check if branch changed (throttled to every 5s)
+    const now = Date.now();
+    if (!session._lastBranchCheck || (now - session._lastBranchCheck) > 5000) {
+      session._lastBranchCheck = now;
+      const currentBranch = getGitBranch(session.cwd);
+      if (currentBranch && currentBranch !== session.gitBranch) {
+        session.gitBranch = currentBranch;
+      }
+    }
+
     // Broadcast status change to connected clients
     broadcastToSession(session, {
       type: "status",
@@ -536,6 +706,7 @@ apiRoutes.post("/status-update", async (c) => {
       isRestored: session.isRestored,
       currentTool: session.currentTool,
       hookEvent: hookEvent,
+      gitBranch: session.gitBranch,
     });
 
     return c.json({ success: true });

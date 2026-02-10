@@ -39,6 +39,8 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
     contextMenu,
     handleContextMenu,
     handleDelete,
+    handleFork,
+    canFork,
     closeContextMenu,
   } = useAgentNodeState(id, nodeData, session);
 
@@ -75,6 +77,8 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           position={contextMenu}
           onClose={closeContextMenu}
           onDelete={handleDelete}
+          onFork={handleFork}
+          showFork={canFork}
         />
       )}
     </>

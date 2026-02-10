@@ -2,13 +2,13 @@ import { MessageSquare, WifiOff, GitBranch, Folder, Wrench } from "lucide-react"
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
-const statusConfig: Record<AgentStatus, { label: string; color: string; bgColor: string; isActive?: boolean; needsAttention?: boolean }> = {
-  running: { label: "Working", color: "#22C55E", bgColor: "#22C55E15", isActive: true },
-  tool_calling: { label: "Working", color: "#22C55E", bgColor: "#22C55E15", isActive: true },
-  waiting_input: { label: "Needs Input", color: "#F97316", bgColor: "#F9731620", needsAttention: true },
-  idle: { label: "Idle", color: "#FBBF24", bgColor: "#FBBF2415", needsAttention: true },
-  disconnected: { label: "Offline", color: "#6B7280", bgColor: "#6B728015" },
-  error: { label: "Error", color: "#EF4444", bgColor: "#EF444415", needsAttention: true },
+const statusConfig: Record<AgentStatus, { label: string; color: string; isActive?: boolean; needsAttention?: boolean }> = {
+  running: { label: "Working", color: "#22C55E", isActive: true },
+  tool_calling: { label: "Working", color: "#22C55E", isActive: true },
+  waiting_input: { label: "Needs Input", color: "#F97316", needsAttention: true },
+  idle: { label: "Idle", color: "#FBBF24", needsAttention: true },
+  disconnected: { label: "Offline", color: "#6B7280" },
+  error: { label: "Error", color: "#EF4444", needsAttention: true },
 };
 
 // Tool name display mapping
@@ -101,12 +101,12 @@ export function AgentNodeCard({
           }}
         />
       )}
-      {/* Pulsing border for attention states */}
+      {/* Pulsing glow for attention states */}
       {needsAttention && (
         <div
           className="absolute inset-0 rounded-lg pointer-events-none"
           style={{
-            border: `2px solid ${statusInfo.color}`,
+            boxShadow: `0 0 20px ${statusInfo.color}50, 0 0 40px ${statusInfo.color}25`,
             animation: 'attention-pulse 1.5s ease-in-out infinite',
           }}
         />
@@ -115,7 +115,7 @@ export function AgentNodeCard({
       {/* Status banner */}
       <div
         className="px-3 py-1.5 flex items-center justify-between relative"
-        style={{ backgroundColor: statusInfo.bgColor }}
+        style={{ borderBottom: `1px solid ${statusInfo.color}20` }}
       >
         <div className="flex items-center gap-2">
           {/* Status indicator - animated ring for active */}

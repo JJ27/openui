@@ -133,6 +133,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               status: msg.status as AgentStatus,
               isRestored: msg.isRestored,
               currentTool: msg.currentTool,
+              ...(msg.gitBranch ? { gitBranch: msg.gitBranch } : {}),
             });
           }
         } catch (e) {

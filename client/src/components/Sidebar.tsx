@@ -16,6 +16,7 @@ import {
   Brain,
   Wand2,
   GitBranch,
+  GitFork,
   Archive,
 } from "lucide-react";
 import { useStore, AgentStatus } from "../stores/useStore";
@@ -61,6 +62,9 @@ export function Sidebar() {
     archiveSession,
     unarchiveSession,
     showArchived,
+    addNode,
+    addSession,
+    activeCanvasId,
   } = useStore();
 
   const session = selectedNodeId ? sessions.get(selectedNodeId) : null;
@@ -103,6 +107,53 @@ export function Sidebar() {
       setNewSessionForNodeId(selectedNodeId);
       setNewSessionModalOpen(true);
     }
+  };
+
+  const canFork = session?.agentId === "claude";
+
+  const handleFork = async () => {
+    if (!selectedNodeId || !session) return;
+    const parentNode = nodes.find(n => n.id === selectedNodeId);
+    const parentPos = parentNode?.position || { x: 0, y: 0 };
+    const forkPos = { x: parentPos.x + 250, y: parentPos.y + 60 };
+
+    const res = await fetch(`/api/sessions/${session.sessionId}/fork`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ position: forkPos, canvasId: activeCanvasId }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const nodeData = parentNode?.data as any;
+    addNode({
+      id: data.nodeId,
+      type: "agent",
+      position: forkPos,
+      data: {
+        label: data.customName || "Fork",
+        agentId: data.agentId || session.agentId,
+        color: data.customColor || session.customColor || session.color,
+        icon: nodeData?.icon || "sparkles",
+        sessionId: data.sessionId,
+      },
+    });
+    addSession(data.nodeId, {
+      id: data.nodeId,
+      sessionId: data.sessionId,
+      agentId: data.agentId || session.agentId,
+      agentName: data.agentName || session.agentName,
+      command: session.command,
+      color: data.customColor || session.customColor || session.color,
+      createdAt: new Date().toISOString(),
+      cwd: data.cwd || session.cwd,
+      originalCwd: data.originalCwd,
+      gitBranch: data.gitBranch,
+      status: "running",
+      customName: data.customName,
+      customColor: data.customColor,
+    });
+    setSelectedNodeId(data.nodeId);
   };
 
   const displayColor = editColor || session?.customColor || session?.color || "#888";
@@ -160,6 +211,15 @@ export function Sidebar() {
                 >
                   <Edit3 className="w-4 h-4" />
                 </button>
+                {canFork && (
+                  <button
+                    onClick={handleFork}
+                    className="w-7 h-7 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-active transition-colors"
+                    title="Fork session"
+                  >
+                    <GitFork className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   onClick={async () => {
                     if (selectedNodeId) {
@@ -203,9 +263,14 @@ export function Sidebar() {
                           method: "POST",
                         });
                         if (res.ok) {
-                          // Force terminal recreation
-                          setTerminalKey(k => k + 1);
-                          updateSession(selectedNodeId!, { status: "running", isRestored: false });
+                          if (showArchived) {
+                            // Resuming from archived view — reload to show on active canvas
+                            window.location.reload();
+                          } else {
+                            // Force terminal recreation
+                            setTerminalKey(k => k + 1);
+                            updateSession(selectedNodeId!, { status: "running", isRestored: false });
+                          }
                         } else {
                           console.error("Failed to resume session: server returned", res.status);
                         }
