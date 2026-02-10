@@ -11,17 +11,18 @@ interface SettingsModalProps {
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [defaultBaseBranch, setDefaultBaseBranch] = useState("main");
   const [createWorktree, setCreateWorktree] = useState(true);
+  const [updateChannel, setUpdateChannel] = useState("stable");
   const [isSaving, setIsSaving] = useState(false);
 
   // Load existing config
   useEffect(() => {
     if (open) {
-      // TODO: Create a generic config endpoint instead of linear-specific one
-      fetch("/api/linear/config")
+      fetch("/api/config")
         .then((res) => res.json())
         .then((config) => {
           setDefaultBaseBranch(config.defaultBaseBranch || "main");
           setCreateWorktree(config.createWorktree ?? true);
+          setUpdateChannel(config.updateChannel || "stable");
         })
         .catch(console.error);
     }
@@ -31,13 +32,13 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     setIsSaving(true);
 
     try {
-      // TODO: Update to use generic config endpoint
-      await fetch("/api/linear/config", {
-        method: "POST",
+      await fetch("/api/config", {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           defaultBaseBranch,
           createWorktree,
+          updateChannel,
         }),
       });
 
@@ -81,9 +82,46 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
               {/* Content */}
               <div className="p-5 space-y-6">
+                {/* Update Channel */}
+                <div>
+                  <h3 className="text-sm font-medium text-white mb-3">Updates</h3>
+                  <div className="space-y-2">
+                    <label className="text-xs text-zinc-500 block mb-1.5">
+                      Update channel
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setUpdateChannel("stable")}
+                        className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${
+                          updateChannel === "stable"
+                            ? "border-green-500/50 bg-green-500/10 text-green-400"
+                            : "border-border bg-canvas text-zinc-400 hover:text-white hover:border-zinc-500"
+                        }`}
+                      >
+                        Stable
+                      </button>
+                      <button
+                        onClick={() => setUpdateChannel("main")}
+                        className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${
+                          updateChannel === "main"
+                            ? "border-orange-500/50 bg-orange-500/10 text-orange-400"
+                            : "border-border bg-canvas text-zinc-400 hover:text-white hover:border-zinc-500"
+                        }`}
+                      >
+                        Beta
+                      </button>
+                    </div>
+                    <p className="text-xs text-zinc-600">
+                      {updateChannel === "stable"
+                        ? "Receive tested, stable updates only."
+                        : "Receive the latest changes from main. May contain bugs."}
+                    </p>
+                  </div>
+                </div>
+
                 {/* Git Settings */}
                 <div>
-                  <h3 className="text-sm font-medium text-white mb-3">Git Settings</h3>
+                  <h3 className="text-sm font-medium text-white mb-3">Git</h3>
                   <div className="space-y-3">
                     <div>
                       <label className="text-xs text-zinc-500 block mb-1.5">

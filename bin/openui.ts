@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { $ } from "bun";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
@@ -18,6 +18,18 @@ const PORT = process.env.PORT || 6969;
 const LAUNCH_CWD = process.cwd();
 const IS_DEV = process.env.NODE_ENV === "development" || process.argv.includes("--dev");
 
+// Read update channel from config (defaults to "stable")
+function getUpdateChannel(): string {
+  try {
+    const configPath = join(homedir(), ".openui", "config.json");
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, "utf8"));
+      if (typeof config.updateChannel === "string") return config.updateChannel;
+    }
+  } catch {}
+  return "stable";
+}
+
 // Auto-install plugin if not present
 async function ensurePluginInstalled() {
   const pluginDir = join(homedir(), ".openui", "claude-code-plugin");
@@ -29,7 +41,8 @@ async function ensurePluginInstalled() {
 
   console.log("\x1b[38;5;141m[plugin]\x1b[0m Installing Claude Code plugin...");
 
-  const GITHUB_RAW = "https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin";
+  const channel = getUpdateChannel();
+  const GITHUB_RAW = `https://raw.githubusercontent.com/Fallomai/openui/${channel}/claude-code-plugin`;
 
   try {
     // Create directories
@@ -82,13 +95,16 @@ async function autoUpdateFromGit() {
   const buildCommitFile = join(dataDir, ".build-commit");
 
   // Try to fetch + pull from origin
+  const channel = getUpdateChannel();
+  const channelLabel = channel === "stable" ? "stable" : `${channel} (beta)`;
+  console.log(`\x1b[38;5;245m[update]\x1b[0m Channel: ${channelLabel}`);
   try {
-    await $`git -C ${ROOT_DIR} fetch origin main --quiet`.timeout(5000);
+    await $`git -C ${ROOT_DIR} fetch origin ${channel} --quiet`.timeout(5000);
 
-    const behind = (await $`git -C ${ROOT_DIR} rev-list HEAD..origin/main --count`.text()).trim();
+    const behind = (await $`git -C ${ROOT_DIR} rev-list HEAD..origin/${channel} --count`.text()).trim();
     if (parseInt(behind) > 0) {
-      console.log(`\x1b[38;5;141m[update]\x1b[0m ${behind} new commit(s) available, pulling...`);
-      const result = await $`git -C ${ROOT_DIR} pull --ff-only origin main`.quiet();
+      console.log(`\x1b[38;5;141m[update]\x1b[0m ${behind} new commit(s) on ${channelLabel}, pulling...`);
+      const result = await $`git -C ${ROOT_DIR} pull --ff-only origin ${channel}`.quiet();
       if (result.exitCode !== 0) {
         console.log(`\x1b[38;5;208m[update]\x1b[0m Could not auto-update (local changes?). Run 'git pull' manually.`);
       } else {

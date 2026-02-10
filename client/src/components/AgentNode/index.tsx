@@ -28,9 +28,10 @@ interface AgentNodeData {
 export const AgentNode = ({ id, data, selected }: NodeProps) => {
   const nodeData = data as unknown as AgentNodeData;
 
-  // Subscribe directly to status and currentTool as primitive values - this guarantees re-render on change
+  // Subscribe directly to primitive values - this guarantees re-render only when each value changes
   const status: AgentStatus = useStore((state) => state.sessions.get(id)?.status) || "idle";
   const currentTool = useStore((state) => state.sessions.get(id)?.currentTool);
+  const longRunningTool = useStore((state) => state.sessions.get(id)?.longRunningTool) || false;
 
   // Get the full session for other data
   const session = useStore((state) => state.sessions.get(id));
@@ -69,6 +70,7 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           gitBranch={session?.gitBranch}
           ticketId={session?.ticketId}
           ticketTitle={session?.ticketTitle}
+          longRunningTool={longRunningTool}
         />
       </motion.div>
 

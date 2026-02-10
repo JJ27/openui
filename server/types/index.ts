@@ -43,6 +43,9 @@ export interface Session {
   // Permission detection
   preToolTime?: number;
   permissionTimeout?: ReturnType<typeof setTimeout>;
+  // Long-running tool detection (server-side)
+  longRunningTool?: boolean;
+  longRunningTimeout?: ReturnType<typeof setTimeout>;
   // Archive status
   archived?: boolean;
   // Canvas/tab organization

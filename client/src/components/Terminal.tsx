@@ -134,6 +134,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               isRestored: msg.isRestored,
               currentTool: msg.currentTool,
               ...(msg.gitBranch ? { gitBranch: msg.gitBranch } : {}),
+              longRunningTool: msg.longRunningTool || false,
             });
           }
         } catch (e) {
