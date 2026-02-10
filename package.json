@@ -2,16 +2,16 @@
   "name": "@fallom/openui",
   "version": "1.2.1",
   "description": "Visual canvas UI for managing AI coding agents locally",
-  "author": "Fallom AI",
+  "author": "JJ27",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Fallomai/openui.git"
+    "url": "git+https://github.com/JJ27/openui.git"
   },
   "bugs": {
-    "url": "https://github.com/Fallomai/openui/issues"
+    "url": "https://github.com/JJ27/openui/issues"
   },
-  "homepage": "https://github.com/Fallomai/openui#readme",
+  "homepage": "https://github.com/JJ27/openui#readme",
   "keywords": [
     "ai",
     "coding-agent",

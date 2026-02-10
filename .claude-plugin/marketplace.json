@@ -1,8 +1,8 @@
 {
   "name": "openui-plugins",
   "owner": {
-    "name": "Fallom AI",
-    "email": "support@fallom.ai"
+    "name": "JJ27",
+    "email": ""
   },
   "metadata": {
     "description": "Plugins for OpenUI - the AI Agent Command Center",
@@ -15,7 +15,7 @@
       "description": "Reports Claude Code agent status to OpenUI for real-time status display (Working, Using Tools, Idle, etc.)",
       "version": "1.0.0",
       "author": {
-        "name": "Fallom AI"
+        "name": "JJ27"
       }
     }
   ]
