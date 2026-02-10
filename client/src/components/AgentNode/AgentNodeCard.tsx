@@ -1,4 +1,5 @@
-import { MessageSquare, WifiOff, GitBranch, Folder, Wrench } from "lucide-react";
+import { useState, useEffect } from "react";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock } from "lucide-react";
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
@@ -39,6 +40,7 @@ interface AgentNodeCardProps {
   gitBranch?: string;
   ticketId?: string;
   ticketTitle?: string;
+  toolStartTime?: number;
 }
 
 export function AgentNodeCard({
@@ -54,6 +56,7 @@ export function AgentNodeCard({
   gitBranch,
   ticketId,
   ticketTitle,
+  toolStartTime,
 }: AgentNodeCardProps) {
   // agentId is available for future use if needed
   void agentId;
@@ -61,6 +64,29 @@ export function AgentNodeCard({
   const isActive = statusInfo.isActive;
   const isToolCalling = status === "tool_calling";
   const needsAttention = statusInfo.needsAttention;
+
+  // Live elapsed time for a single long-running tool call (updates every 30s after 5min threshold)
+  const LONG_RUNNING_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+  const [elapsed, setElapsed] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toolStartTime) {
+      setElapsed(null);
+      return;
+    }
+    const update = () => {
+      const ms = Date.now() - toolStartTime;
+      if (ms >= LONG_RUNNING_THRESHOLD) {
+        const mins = Math.floor(ms / 60000);
+        setElapsed(mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`);
+      } else {
+        setElapsed(null);
+      }
+    };
+    update();
+    const interval = setInterval(update, 30000);
+    return () => clearInterval(interval);
+  }, [toolStartTime]);
 
   // Extract directory name - use originalCwd (mother repo) if available, otherwise cwd
   const displayCwd = originalCwd || cwd;
@@ -138,8 +164,15 @@ export function AgentNodeCard({
           <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
             {statusInfo.label}
           </span>
+          {/* Show elapsed time for long-running sessions */}
+          {elapsed && (
+            <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+              <Clock className="w-2.5 h-2.5" />
+              {elapsed}
+            </span>
+          )}
           {/* Show current tool when tool_calling */}
-          {isToolCalling && toolDisplay && (
+          {isToolCalling && toolDisplay && !elapsed && (
             <span className="text-[10px] text-zinc-400 flex items-center gap-1">
               <Wrench className="w-2.5 h-2.5" />
               {toolDisplay}

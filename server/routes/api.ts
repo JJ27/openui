@@ -707,6 +707,7 @@ apiRoutes.post("/status-update", async (c) => {
       currentTool: session.currentTool,
       hookEvent: hookEvent,
       gitBranch: session.gitBranch,
+      toolStartTime: session.preToolTime,
     });
 
     return c.json({ success: true });
