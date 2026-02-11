@@ -241,7 +241,7 @@ apiRoutes.post("/sessions", async (c) => {
   const workingDir = cwd || LAUNCH_CWD;
 
   try {
-    const result = createSession({
+    const result = await createSession({
       sessionId,
       agentId,
       agentName,
@@ -420,7 +420,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   let gitBranch = session.gitBranch;
 
   if (body.createWorktree && body.branchName) {
-    const wt = createWorktree({
+    const wt = await createWorktree({
       cwd: effectiveCwd,
       branchName: body.branchName,
       baseBranch: body.baseBranch || "main",

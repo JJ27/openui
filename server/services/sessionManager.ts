@@ -128,12 +128,27 @@ function getMainWorktree(cwd: string): string | null {
   return null;
 }
 
+// Run a git command asynchronously (doesn't block the event loop)
+async function gitAsync(args: string[], cwd: string, timeoutSec = 15): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(["timeout", String(timeoutSec), "git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  return { exitCode, stdout, stderr };
+}
+
 // Create a git worktree for a branch
-export function createWorktree(params: {
+export async function createWorktree(params: {
   cwd: string;
   branchName: string;
   baseBranch: string;
-}): { success: boolean; worktreePath?: string; branchName?: string; error?: string } {
+}): Promise<{ success: boolean; worktreePath?: string; branchName?: string; error?: string }> {
   const { cwd, branchName, baseBranch } = params;
   const gitRoot = getGitRoot(cwd);
 
@@ -162,55 +177,37 @@ export function createWorktree(params: {
     suffix++;
   }
 
-  // Fetch latest from remote first (with timeout to avoid blocking the server)
-  log(`\x1b[38;5;141m[worktree]\x1b[0m Fetching from remote...`);
-  spawnSync(["timeout", "15", "git", "fetch", "origin"], { cwd: gitRoot, stdout: "pipe", stderr: "pipe" });
+  // Fetch only the specific branches we need (not the entire remote)
+  log(`\x1b[38;5;141m[worktree]\x1b[0m Fetching ${baseBranch} from remote...`);
+  const fetchRefs = [baseBranch];
+  if (branchName !== baseBranch) fetchRefs.push(branchName);
+  await gitAsync(["fetch", "origin", ...fetchRefs], gitRoot, 15);
 
   // Check if the original branch exists locally or remotely
   // (only relevant when no suffix was added; suffixed branches are always new)
-  const localBranch = spawnSync(["timeout", "5", "git", "rev-parse", "--verify", finalBranchName], {
-    cwd: gitRoot,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const remoteBranch = spawnSync(["timeout", "5", "git", "rev-parse", "--verify", `origin/${finalBranchName}`], {
-    cwd: gitRoot,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const [localBranch, remoteBranch] = await Promise.all([
+    gitAsync(["rev-parse", "--verify", finalBranchName], gitRoot, 5),
+    gitAsync(["rev-parse", "--verify", `origin/${finalBranchName}`], gitRoot, 5),
+  ]);
 
   let result;
   if (localBranch.exitCode === 0) {
     // Branch exists locally, just add worktree
     log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree for existing branch: ${finalBranchName}`);
-    result = spawnSync(["timeout", "30", "git", "worktree", "add", worktreePath, finalBranchName], {
-      cwd: gitRoot,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    result = await gitAsync(["worktree", "add", worktreePath, finalBranchName], gitRoot, 30);
   } else if (remoteBranch.exitCode === 0) {
     // Branch exists on remote, track it
     log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree tracking remote branch: ${finalBranchName}`);
-    result = spawnSync(["timeout", "30", "git", "worktree", "add", "--track", "-b", finalBranchName, worktreePath, `origin/${finalBranchName}`], {
-      cwd: gitRoot,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    result = await gitAsync(["worktree", "add", "--track", "-b", finalBranchName, worktreePath, `origin/${finalBranchName}`], gitRoot, 30);
   } else {
     // Create new branch from base
     log(`\x1b[38;5;141m[worktree]\x1b[0m Creating new worktree with branch: ${finalBranchName} from ${baseBranch}`);
-    result = spawnSync(["timeout", "30", "git", "worktree", "add", "-b", finalBranchName, worktreePath, `origin/${baseBranch}`], {
-      cwd: gitRoot,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    result = await gitAsync(["worktree", "add", "-b", finalBranchName, worktreePath, `origin/${baseBranch}`], gitRoot, 30);
   }
 
   if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString();
-    logError(`\x1b[38;5;141m[worktree]\x1b[0m Failed to create worktree:`, stderr);
-    return { success: false, error: stderr };
+    logError(`\x1b[38;5;141m[worktree]\x1b[0m Failed to create worktree:`, result.stderr);
+    return { success: false, error: result.stderr };
   }
 
   log(`\x1b[38;5;141m[worktree]\x1b[0m Created worktree at: ${worktreePath} (branch: ${finalBranchName})`);
@@ -236,7 +233,7 @@ export function broadcastToSession(session: Session, message: object) {
 
 export const sessions = new Map<string, Session>();
 
-export function createSession(params: {
+export async function createSession(params: {
   sessionId: string;
   agentId: string;
   agentName: string;
@@ -279,7 +276,7 @@ export function createSession(params: {
 
   // If worktree requested, create it and use that path
   if (createWorktreeFlag && branchName && baseBranch) {
-    const result = createWorktree({
+    const result = await createWorktree({
       cwd: originalCwd,
       branchName,
       baseBranch,
