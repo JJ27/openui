@@ -415,6 +415,14 @@ export function Sidebar() {
                                 data: { ...node.data, icon: id },
                               });
                             }
+                            // Persist to server
+                            if (session) {
+                              fetch(`/api/sessions/${session.sessionId}`, {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ icon: id }),
+                              }).catch(console.error);
+                            }
                           }}
                           className={`w-9 h-9 rounded-md transition-all flex items-center justify-center ${
                             editIcon === id

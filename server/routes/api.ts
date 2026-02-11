@@ -544,6 +544,7 @@ apiRoutes.patch("/sessions/:sessionId", async (c) => {
   const updates = await c.req.json();
   if (updates.customName !== undefined) session.customName = updates.customName;
   if (updates.customColor !== undefined) session.customColor = updates.customColor;
+  if (updates.icon !== undefined) session.icon = updates.icon;
   if (updates.notes !== undefined) session.notes = updates.notes;
 
   saveState(sessions);
@@ -683,7 +684,7 @@ apiRoutes.post("/status-update", async (c) => {
         // Timeout-based permission detection as fallback for non-Bash/Task tools.
         // Bash/Task are excluded since they can run for a long time — the PermissionRequest
         // hook handles permission detection for those definitively.
-        const longRunningTools = ["Bash", "Task"];
+        const longRunningTools = ["Bash", "Task", "TaskOutput"];
         if (!longRunningTools.includes(toolName)) {
           session.permissionTimeout = setTimeout(() => {
             if (session.preToolTime) {

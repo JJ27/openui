@@ -22,6 +22,7 @@ export interface Session {
   recentOutputSize: number;
   customName?: string;
   customColor?: string;
+  icon?: string;
   notes?: string;
   nodeId: string;
   isRestored?: boolean;
