@@ -280,10 +280,11 @@ export function restoreSessions() {
       continue;
     }
 
-    // Migrate old command format
-    if (node.command === "llm agent claude") {
-      node.command = "isaac claude";
-      log(`\x1b[38;5;141m[restore]\x1b[0m Migrated command for ${node.sessionId}: llm agent claude -> isaac claude`);
+    // Migrate old command format (handles "llm agent claude" with or without flags like --resume)
+    if (node.command.startsWith("llm agent claude")) {
+      const oldCommand = node.command;
+      node.command = node.command.replace("llm agent claude", "isaac claude");
+      log(`\x1b[38;5;141m[restore]\x1b[0m Migrated command for ${node.sessionId}: ${oldCommand} -> ${node.command}`);
     }
 
     console.log(`[restore] Loading session: ${node.sessionId} (${node.customName}) archived=${node.archived}`);

@@ -283,8 +283,10 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     // Restore archived session into the sessions Map
     const buffer = loadBuffer(sessionId);
 
-    // Migrate old command format
-    const command = archivedNode.command === "llm agent claude" ? "isaac claude" : archivedNode.command;
+    // Migrate old command format (handles "llm agent claude" with or without flags)
+    const command = archivedNode.command.startsWith("llm agent claude")
+      ? archivedNode.command.replace("llm agent claude", "isaac claude")
+      : archivedNode.command;
 
     session = {
       pty: null,
