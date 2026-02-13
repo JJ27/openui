@@ -5,7 +5,6 @@ import type { ServerWebSocket } from "bun";
 import { apiRoutes } from "./routes/api";
 import { sessions, restoreSessions, autoResumeSessions } from "./services/sessionManager";
 import { saveState, migrateStateToHome } from "./services/persistence";
-import * as worktreeRegistry from "./services/worktreeRegistry";
 import { setAuthBroadcast } from "./services/sessionStartQueue";
 import type { WebSocketData } from "./types";
 
@@ -109,14 +108,6 @@ Bun.serve<WebSocketData>({
         longRunningTool: session.longRunningTool || false,
       }));
 
-      // If session is setting up, send current progress
-      if (session.setupStatus === "creating_worktree") {
-        ws.send(JSON.stringify({
-          type: "setup_progress",
-          progress: session.setupProgress || 0,
-          phase: session.setupPhase || "Setting up",
-        }));
-      }
     },
     message(ws, message) {
       const { sessionId } = ws.data;
@@ -187,7 +178,6 @@ setInterval(() => {
 process.on("SIGINT", async () => {
   log("\n\x1b[38;5;245m[server]\x1b[0m Saving state before exit...");
   saveState(sessions);
-  await worktreeRegistry.cleanup();
   for (const [, session] of sessions) {
     if (session.pty) session.pty.kill();
     if (session.stateTrackerPty) session.stateTrackerPty.kill();

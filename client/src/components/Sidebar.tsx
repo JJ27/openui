@@ -31,7 +31,6 @@ const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   idle: { label: "Idle", color: "#6B7280" },
   disconnected: { label: "Disconnected", color: "#EF4444" },
   error: { label: "Error", color: "#EF4444" },
-  setting_up: { label: "Setting up", color: "#60A5FA" },
 };
 
 const presetColors = [
@@ -137,7 +136,6 @@ export function Sidebar() {
           branchName: opts.branchName,
           baseBranch: opts.baseBranch,
           createWorktree: opts.createWorktree,
-          sparseCheckout: opts.sparseCheckout,
         } : {}),
       }),
     });
@@ -167,7 +165,6 @@ export function Sidebar() {
       color: data.customColor || opts.color || session.color,
       createdAt: new Date().toISOString(),
       cwd: data.cwd || session.cwd,
-      originalCwd: data.originalCwd,
       gitBranch: data.gitBranch,
       status: "running",
       customName: data.customName,

@@ -178,8 +178,6 @@ export function NewSessionModal({
   const [baseBranch, setBaseBranch] = useState("main");
   const [createWorktree, setCreateWorktree] = useState(true);
   const [showBranchOptions, setShowBranchOptions] = useState(false);
-  const [checkoutType, setCheckoutType] = useState<"full" | "sparse">("full");
-
   // Directory picker state
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [dirBrowsePath, setDirBrowsePath] = useState("");
@@ -219,11 +217,6 @@ export function NewSessionModal({
       ).length
     : 0;
 
-  // Check if cwd is the git root (sparse makes no sense at root)
-  // We approximate this client-side: if cwd ends with the directory name only (no deeper path)
-  // A more accurate check would require a server call, but this is good enough for the UI hint
-  const cwdIsRepoRoot = false; // Will be dynamically determined
-
   // Reset form when modal opens (only once per open)
   useEffect(() => {
     if (open && !initialized) {
@@ -248,7 +241,6 @@ export function NewSessionModal({
       setBaseBranch("main");
       setCreateWorktree(true);
       setShowBranchOptions(false);
-      setCheckoutType("full");
       // Reset GitHub state
       setSelectedGithubIssue(null);
       setGithubIssues([]);
@@ -420,20 +412,19 @@ export function NewSessionModal({
               branchName,
               baseBranch,
               createWorktree,
-              ...(createWorktree && checkoutType === "sparse" ? { sparseCheckout: true } : {}),
             }),
           }),
         });
 
         if (res.ok) {
-          const { sessionId: newSessionId, gitBranch, cwd: newCwd, setupPending } = await res.json();
+          const { sessionId: newSessionId, gitBranch, cwd: newCwd } = await res.json();
           updateSession(existingNodeId, {
             sessionId: newSessionId,
             agentId: selectedAgent.id,
             agentName: selectedAgent.name,
             command: fullCommand,
             cwd: newCwd || workingDir,
-            status: setupPending ? "setting_up" : "idle",
+            status: "idle",
             isRestored: false,
             ticketId: selectedGithubIssue ? `#${selectedGithubIssue.number}` : undefined,
             ticketTitle: selectedGithubIssue?.title,
@@ -482,12 +473,11 @@ export function NewSessionModal({
                 branchName,
                 baseBranch,
                 createWorktree,
-                ...(createWorktree && checkoutType === "sparse" ? { sparseCheckout: true } : {}),
               }),
             }),
           });
 
-          const { sessionId, gitBranch, cwd: newCwd, setupPending } = await res.json();
+          const { sessionId, gitBranch, cwd: newCwd } = await res.json();
 
           const { x, y } = freePositions[i];
 
@@ -515,7 +505,7 @@ export function NewSessionModal({
             createdAt: new Date().toISOString(),
             cwd: newCwd || workingDir,
             gitBranch: gitBranch || branchName || undefined,
-            status: setupPending ? "setting_up" : "idle",
+            status: "idle",
             customName: count > 1 ? agentName : customName || undefined,
             ticketId: i === 0 ? (selectedGithubIssue ? `#${selectedGithubIssue.number}` : undefined) : undefined,
             ticketTitle: i === 0 ? selectedGithubIssue?.title : undefined,
@@ -1182,50 +1172,6 @@ export function NewSessionModal({
                                 />
                                 <span className="text-sm text-zinc-300">Create git worktree</span>
                               </label>
-
-                              {/* Checkout type: full vs sparse */}
-                              {createWorktree && (
-                                <div className="space-y-2">
-                                  <label className="text-xs text-zinc-500">Checkout type</label>
-                                  <div className="space-y-1.5">
-                                    <label className="flex items-start gap-2 cursor-pointer px-2.5 py-2 rounded-md hover:bg-surface-hover transition-colors">
-                                      <input
-                                        type="radio"
-                                        name="checkoutType"
-                                        checked={checkoutType === "full"}
-                                        onChange={() => setCheckoutType("full")}
-                                        className="mt-0.5 w-3.5 h-3.5 border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
-                                      />
-                                      <div>
-                                        <span className="text-sm text-zinc-300">Full repository</span>
-                                        <p className="text-[10px] text-zinc-500">Complete repo access. Reuses existing worktrees when available.</p>
-                                      </div>
-                                    </label>
-                                    <label
-                                      className={`flex items-start gap-2 px-2.5 py-2 rounded-md transition-colors ${
-                                        cwdIsRepoRoot
-                                          ? "opacity-40 cursor-not-allowed"
-                                          : "cursor-pointer hover:bg-surface-hover"
-                                      }`}
-                                    >
-                                      <input
-                                        type="radio"
-                                        name="checkoutType"
-                                        checked={checkoutType === "sparse"}
-                                        onChange={() => !cwdIsRepoRoot && setCheckoutType("sparse")}
-                                        disabled={cwdIsRepoRoot}
-                                        className="mt-0.5 w-3.5 h-3.5 border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
-                                      />
-                                      <div>
-                                        <span className="text-sm text-zinc-300">Sparse checkout</span>
-                                        <p className="text-[10px] text-zinc-500">
-                                          Only checks out the working directory. Faster for large repos. Auto-expands as needed.
-                                        </p>
-                                      </div>
-                                    </label>
-                                  </div>
-                                </div>
-                              )}
 
                               <div className="flex items-start gap-2 px-3 py-2 rounded bg-zinc-900/50 border border-zinc-800">
                                 <AlertCircle className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />

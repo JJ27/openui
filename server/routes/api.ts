@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, getGitRoot, createWorktree } from "../services/sessionManager";
-import * as worktreeRegistry from "../services/worktreeRegistry";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { join } from "path";
@@ -86,7 +85,7 @@ apiRoutes.get("/agents", (c) => {
     {
       id: "claude",
       name: "Claude Code",
-      command: "llm agent claude",
+      command: "isaac claude",
       description: "Anthropic's official CLI for Claude",
       color: "#F97316",
       icon: "sparkles",
@@ -127,7 +126,6 @@ apiRoutes.get("/sessions", (c) => {
         command: node.command,
         createdAt: node.createdAt,
         cwd: node.cwd,
-        originalCwd: node.originalCwd,
         gitBranch: node.gitBranch,
         status: "disconnected",
         customName: node.customName,
@@ -153,7 +151,6 @@ apiRoutes.get("/sessions", (c) => {
         command: session.command,
         createdAt: session.createdAt,
         cwd: session.cwd,
-        originalCwd: session.originalCwd, // Mother repo path when using worktrees
         gitBranch: session.gitBranch,
         status: session.status,
         customName: session.customName,
@@ -234,9 +231,8 @@ apiRoutes.post("/sessions", async (c) => {
     ticketTitle,
     ticketUrl,
     branchName,
-    baseBranch,
     createWorktree: createWorktreeFlag,
-    sparseCheckout,
+    prNumber,
   } = body;
 
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -256,9 +252,8 @@ apiRoutes.post("/sessions", async (c) => {
       ticketTitle,
       ticketUrl,
       branchName,
-      baseBranch,
       createWorktreeFlag,
-      sparseCheckout,
+      prNumber,
       ticketPromptTemplate: undefined,
     });
 
@@ -268,7 +263,6 @@ apiRoutes.post("/sessions", async (c) => {
       nodeId,
       cwd: result.cwd,
       gitBranch: result.gitBranch,
-      setupPending: result.setupPending || false,
     });
   } catch (error) {
     console.error("[session creation error]", error);
@@ -288,14 +282,16 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
 
     // Restore archived session into the sessions Map
     const buffer = loadBuffer(sessionId);
+
+    // Migrate old command format
+    const command = archivedNode.command === "llm agent claude" ? "isaac claude" : archivedNode.command;
+
     session = {
       pty: null,
       agentId: archivedNode.agentId,
       agentName: archivedNode.agentName,
-      command: archivedNode.command,
+      command,
       cwd: archivedNode.cwd,
-      originalCwd: archivedNode.originalCwd,
-      worktreePath: archivedNode.worktreePath,
       gitBranch: archivedNode.gitBranch || getGitBranch(archivedNode.cwd) || undefined,
       createdAt: archivedNode.createdAt,
       clients: new Set(),
@@ -310,7 +306,6 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       nodeId: archivedNode.nodeId,
       isRestored: true,
       claudeSessionId: archivedNode.claudeSessionId,
-      sparseCheckout: archivedNode.sparseCheckout,
       archived: false,
       canvasId: archivedNode.canvasId,
       ticketId: archivedNode.ticketId,
@@ -323,11 +318,6 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
 
   if (session.pty) return c.json({ error: "Session already running" }, 400);
 
-  // Re-claim worktree in registry if it was released during archive
-  if (session.worktreePath && existsSync(session.worktreePath)) {
-    worktreeRegistry.register(session.worktreePath, getGitRoot(session.originalCwd || session.cwd) || "", sessionId, session.gitBranch || undefined);
-  }
-
   const startFn = async () => {
     const { spawn } = await import("bun-pty");
     const ptyProcess = spawn("/bin/bash", [], {
@@ -337,7 +327,6 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
         ...process.env,
         TERM: "xterm-256color",
         OPENUI_SESSION_ID: sessionId,
-        ...(session.sparseCheckout ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
       },
       rows: 30,
       cols: 120,
@@ -378,7 +367,9 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
 
       const resumeArg = `--resume ${session.claudeSessionId}`;
-      if (finalCommand.includes("llm agent claude")) {
+      if (finalCommand.includes("isaac claude")) {
+        finalCommand = finalCommand.replace("isaac claude", `isaac claude ${resumeArg}`);
+      } else if (finalCommand.includes("llm agent claude")) {
         finalCommand = finalCommand.replace("llm agent claude", `llm agent claude ${resumeArg}`);
       } else if (finalCommand.startsWith("claude")) {
         finalCommand = finalCommand.replace(/^claude(\s|$)/, `claude ${resumeArg}$1`);
@@ -424,39 +415,23 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   const customName = body.customName || `${parentName} (fork)`;
   const customColor = body.customColor || session.customColor;
 
-  // Determine working directory — optionally create a worktree
   let effectiveCwd = body.cwd || session.cwd;
-  let worktreePath: string | undefined = session.worktreePath;
-  let originalCwd = session.originalCwd || session.cwd;
   let gitBranch = session.gitBranch;
 
-  const isSparse = !!(body.sparseCheckout && body.createWorktree && body.branchName);
-
+  // Build isaac flags for worktree/branch/PR
+  let isaacFlags = "";
   if (body.createWorktree && body.branchName) {
-    // Use createSession's worktree logic via createWorktree for forks
-    const wt = await createWorktree({
-      cwd: effectiveCwd,
-      branchName: body.branchName,
-      baseBranch: body.baseBranch || "main",
-    });
-    if (wt.success && wt.worktreePath) {
-      worktreePath = wt.worktreePath;
-      originalCwd = effectiveCwd;
-      effectiveCwd = wt.worktreePath;
-      gitBranch = wt.branchName || body.branchName;
-      // Register in worktree registry
-      const gitRoot = getGitRoot(originalCwd);
-      if (gitRoot) {
-        worktreeRegistry.register(wt.worktreePath, gitRoot, newSessionId, gitBranch || undefined);
-      }
-    } else {
-      return c.json({ error: `Failed to create worktree: ${wt.error}` }, 400);
-    }
-  } else if (body.cwd) {
+    isaacFlags += ` --worktree --branch "${body.branchName}"`;
+    gitBranch = body.branchName;
+  }
+  if (body.prNumber) {
+    isaacFlags += ` --pr ${body.prNumber}`;
+    if (!gitBranch) gitBranch = `PR #${body.prNumber}`;
+  }
+
+  if (body.cwd && !body.createWorktree) {
     // Custom directory without worktree — detect git branch
     gitBranch = getGitBranch(effectiveCwd) || undefined;
-    worktreePath = undefined;
-    originalCwd = undefined;
   }
 
   const { spawn } = await import("bun-pty");
@@ -467,7 +442,6 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
       ...process.env,
       TERM: "xterm-256color",
       OPENUI_SESSION_ID: newSessionId,
-      ...(isSparse ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
     },
     rows: 30,
     cols: 120,
@@ -477,10 +451,8 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     pty: ptyProcess,
     agentId: session.agentId,
     agentName: session.agentName,
-    command: session.command,  // Base command only — no --fork-session
+    command: session.command,
     cwd: effectiveCwd,
-    originalCwd,
-    worktreePath,
     gitBranch,
     createdAt: new Date().toISOString(),
     clients: new Set() as any,
@@ -494,14 +466,13 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     nodeId: newNodeId,
     isRestored: false,
     autoResumed: false,
-    claudeSessionId: undefined,  // Plugin will report the new forked session ID
+    claudeSessionId: undefined,
     archived: false,
     canvasId,
     position,
     ticketId: session.ticketId,
     ticketTitle: session.ticketTitle,
     ticketUrl: session.ticketUrl,
-    sparseCheckout: isSparse,
   };
 
   sessions.set(newSessionId, newSession);
@@ -524,15 +495,18 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     broadcastToSession(newSession, { type: "output", data });
   });
 
-  // Build the fork command: inject plugin-dir, then --resume <id> --fork-session
+  // Build the fork command: inject plugin-dir, then --resume <id> --fork-session + isaac flags
   let finalCommand = injectPluginDir(session.command, session.agentId);
   finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
   const forkArg = `--resume ${session.claudeSessionId} --fork-session`;
-  if (finalCommand.includes("llm agent claude")) {
+  if (finalCommand.includes("isaac claude")) {
+    finalCommand = finalCommand.replace("isaac claude", `isaac claude ${forkArg}`);
+  } else if (finalCommand.includes("llm agent claude")) {
     finalCommand = finalCommand.replace("llm agent claude", `llm agent claude ${forkArg}`);
   } else if (finalCommand.startsWith("claude")) {
     finalCommand = finalCommand.replace(/^claude(\s|$)/, `claude ${forkArg}$1`);
   }
+  finalCommand += isaacFlags;
 
   setTimeout(() => {
     ptyProcess.write(`${finalCommand}\r`);
@@ -546,8 +520,6 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     sessionId: newSessionId,
     nodeId: newNodeId,
     cwd: effectiveCwd,
-    originalCwd,
-    worktreePath,
     gitBranch,
     canvasId,
     customName,
@@ -603,10 +575,6 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
     // Session is active (in sessions Map) - update it directly
     console.log(`[archive] Updating active session ${sessionId} archived=${archived}`);
     session.archived = archived;
-    // Release worktree back to registry for reuse when archiving
-    if (archived && session.worktreePath) {
-      worktreeRegistry.release(session.worktreePath);
-    }
     saveState(sessions);
   } else {
     // Session is not active (archived) - update state.json directly
@@ -665,6 +633,11 @@ apiRoutes.post("/status-update", async (c) => {
     // Store Claude session ID mapping if we have it
     if (claudeSessionId && !session.claudeSessionId) {
       session.claudeSessionId = claudeSessionId;
+    }
+
+    // Update cwd from hook input (isaac may move to a worktree directory)
+    if (cwd && cwd !== session.cwd) {
+      session.cwd = cwd;
     }
 
     // Signal the start queue that this session has completed OAuth/initialization

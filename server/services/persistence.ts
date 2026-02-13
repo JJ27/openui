@@ -289,11 +289,7 @@ export function saveState(sessions: Map<string, Session>) {
       archived: session.archived || false,
       autoResumed: session.autoResumed || false,  // Track if session was auto-resumed
       canvasId,  // Canvas/tab this agent belongs to
-      // Worktree/git metadata
-      worktreePath: session.worktreePath,
-      originalCwd: session.originalCwd,
       gitBranch: session.gitBranch,
-      sparseCheckout: session.sparseCheckout || undefined,
       // Ticket info
       ticketId: session.ticketId,
       ticketTitle: session.ticketTitle,

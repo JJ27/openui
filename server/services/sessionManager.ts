@@ -1,12 +1,11 @@
 import { spawnSync } from "bun";
 import { spawn as spawnPty } from "bun-pty";
-import { existsSync, mkdirSync } from "fs";
-import { join, basename, relative } from "path";
+import { existsSync } from "fs";
+import { join } from "path";
 import { homedir } from "os";
 import type { Session } from "../types";
 import { loadBuffer } from "./persistence";
 import { enqueueSessionStart, signalSessionReady } from "./sessionStartQueue";
-import * as worktreeRegistry from "./worktreeRegistry";
 
 const QUIET = !!process.env.OPENUI_QUIET;
 const log = QUIET ? () => {} : console.log.bind(console);
@@ -46,12 +45,20 @@ export function injectPluginDir(command: string, agentId: string): string {
   // Check if command already has --plugin-dir
   if (command.includes("--plugin-dir")) return command;
 
-  // Handle both "claude" and "llm agent claude" command formats
+  // Handle "isaac claude", "llm agent claude", and plain "claude" command formats
   const parts = command.split(/\s+/);
 
-  // Check for "llm agent claude" format
+  // Check for "isaac claude" format
+  if (parts[0] === "isaac" && parts[1] === "claude") {
+    parts.splice(2, 0, `--plugin-dir`, pluginDir);
+    const finalCmd = parts.join(" ");
+    log(`\x1b[38;5;141m[plugin]\x1b[0m Injecting plugin-dir: ${pluginDir}`);
+    log(`\x1b[38;5;141m[plugin]\x1b[0m Final command: ${finalCmd}`);
+    return finalCmd;
+  }
+
+  // Check for "llm agent claude" format (legacy)
   if (parts[0] === "llm" && parts[1] === "agent" && parts[2] === "claude") {
-    // Insert --plugin-dir after 'claude' (index 2)
     parts.splice(3, 0, `--plugin-dir`, pluginDir);
     const finalCmd = parts.join(" ");
     log(`\x1b[38;5;141m[plugin]\x1b[0m Injecting plugin-dir: ${pluginDir}`);
@@ -61,7 +68,6 @@ export function injectPluginDir(command: string, agentId: string): string {
 
   // Check for plain "claude" format
   if (parts[0] === "claude") {
-    // Use the path directly without quotes - shell will handle it
     parts.splice(1, 0, `--plugin-dir`, pluginDir);
     const finalCmd = parts.join(" ");
     log(`\x1b[38;5;141m[plugin]\x1b[0m Injecting plugin-dir: ${pluginDir}`);
@@ -87,151 +93,6 @@ export function getGitBranch(cwd: string): string | null {
     // Not a git repo or git not available
   }
   return null;
-}
-
-// Get git root directory (returns worktree path if in a worktree)
-export function getGitRoot(cwd: string): string | null {
-  try {
-    const result = spawnSync(["git", "rev-parse", "--show-toplevel"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (result.exitCode === 0) {
-      return result.stdout.toString().trim();
-    }
-  } catch {
-    // Not a git repo
-  }
-  return null;
-}
-
-// Get the main worktree (mother repo) path - works from any worktree
-function getMainWorktree(cwd: string): string | null {
-  try {
-    // git worktree list shows all worktrees, first one is always the main
-    const result = spawnSync(["git", "worktree", "list", "--porcelain"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (result.exitCode === 0) {
-      const output = result.stdout.toString();
-      // First "worktree" line is the main repo
-      const match = output.match(/^worktree (.+)$/m);
-      if (match) {
-        return match[1];
-      }
-    }
-  } catch {
-    // Not a git repo or worktree command failed
-  }
-  return null;
-}
-
-// Run a git command asynchronously (doesn't block the event loop)
-export async function gitAsync(args: string[], cwd: string, timeoutSec = 15): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["timeout", String(timeoutSec), "git", ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
-  const exitCode = await proc.exited;
-  return { exitCode, stdout, stderr };
-}
-
-// Resolve the actual base ref for branching: try origin/<baseBranch>, then
-// detect remote's default branch (main vs master), then fall back to local.
-export async function resolveBaseRef(baseBranch: string, gitRoot: string): Promise<string> {
-  let baseRef = `origin/${baseBranch}`;
-  await gitAsync(["fetch", "origin", baseBranch], gitRoot, 15);
-  const hasRemoteRef = await gitAsync(["rev-parse", "--verify", baseRef], gitRoot, 5);
-  if (hasRemoteRef.exitCode !== 0) {
-    const headRef = await gitAsync(["symbolic-ref", "refs/remotes/origin/HEAD"], gitRoot, 5);
-    if (headRef.exitCode === 0) {
-      baseRef = headRef.stdout.trim().replace("refs/remotes/", "");
-      log(`\x1b[38;5;141m[worktree]\x1b[0m origin/${baseBranch} not found, using default: ${baseRef}`);
-    } else {
-      baseRef = baseBranch;
-      log(`\x1b[38;5;141m[worktree]\x1b[0m No remote HEAD found, using local: ${baseRef}`);
-    }
-  }
-  return baseRef;
-}
-
-// Create a git worktree for a branch
-export async function createWorktree(params: {
-  cwd: string;
-  branchName: string;
-  baseBranch: string;
-}): Promise<{ success: boolean; worktreePath?: string; branchName?: string; error?: string }> {
-  const { cwd, branchName, baseBranch } = params;
-  log(`\x1b[38;5;141m[worktree]\x1b[0m createWorktree called: cwd=${cwd}, branch=${branchName}, base=${baseBranch}`);
-  const gitRoot = getGitRoot(cwd);
-
-  if (!gitRoot) {
-    log(`\x1b[38;5;141m[worktree]\x1b[0m Not a git repository at: ${cwd}`);
-    return { success: false, error: `Not a git repository at: ${cwd}` };
-  }
-  log(`\x1b[38;5;141m[worktree]\x1b[0m Git root: ${gitRoot}`);
-
-  // Create worktrees directory beside the main repo
-  const repoName = basename(gitRoot);
-  const worktreesDir = join(gitRoot, "..", `${repoName}-worktrees`);
-
-  if (!existsSync(worktreesDir)) {
-    mkdirSync(worktreesDir, { recursive: true });
-  }
-
-  // Sanitize branch name for directory and find unique path
-  const baseDirName = branchName.replace(/\//g, "-");
-  let finalDirName = baseDirName;
-  let finalBranchName = branchName;
-  let worktreePath = join(worktreesDir, finalDirName);
-  let suffix = 2;
-  while (existsSync(worktreePath)) {
-    finalBranchName = `${branchName}-${suffix}`;
-    finalDirName = `${baseDirName}-${suffix}`;
-    worktreePath = join(worktreesDir, finalDirName);
-    suffix++;
-  }
-
-  // Check if branch exists locally first
-  const localBranch = await gitAsync(["rev-parse", "--verify", finalBranchName], gitRoot, 5);
-
-  let result;
-  if (localBranch.exitCode === 0) {
-    // Branch exists locally, just add worktree
-    log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree for existing local branch: ${finalBranchName}`);
-    result = await gitAsync(["worktree", "add", worktreePath, finalBranchName], gitRoot, 30);
-  } else {
-    // Try to fetch the branch from remote — if it exists, track it
-    log(`\x1b[38;5;141m[worktree]\x1b[0m Fetching ${finalBranchName} from remote...`);
-    const fetchBranch = await gitAsync(["fetch", "origin", finalBranchName], gitRoot, 15);
-
-    if (fetchBranch.exitCode === 0) {
-      // Branch exists on remote, create worktree tracking it
-      log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree tracking remote branch: ${finalBranchName}`);
-      result = await gitAsync(["worktree", "add", "--track", "-b", finalBranchName, worktreePath, `origin/${finalBranchName}`], gitRoot, 30);
-    } else {
-      // Branch doesn't exist anywhere — create new branch from base.
-      const baseRef = await resolveBaseRef(baseBranch, gitRoot);
-      log(`\x1b[38;5;141m[worktree]\x1b[0m Creating new branch ${finalBranchName} from ${baseRef}`);
-      result = await gitAsync(["worktree", "add", "-b", finalBranchName, worktreePath, baseRef], gitRoot, 30);
-    }
-  }
-
-  if (result.exitCode !== 0) {
-    logError(`\x1b[38;5;141m[worktree]\x1b[0m Failed to create worktree:`, result.stderr);
-    return { success: false, error: result.stderr };
-  }
-
-  log(`\x1b[38;5;141m[worktree]\x1b[0m Created worktree at: ${worktreePath} (branch: ${finalBranchName})`);
-  return { success: true, worktreePath, branchName: finalBranchName };
 }
 
 
@@ -267,11 +128,10 @@ export async function createSession(params: {
   ticketTitle?: string;
   ticketUrl?: string;
   branchName?: string;
-  baseBranch?: string;
   createWorktreeFlag?: boolean;
-  sparseCheckout?: boolean;
+  prNumber?: string;
   ticketPromptTemplate?: string;
-}): Promise<{ session: Session; cwd: string; gitBranch?: string; setupPending?: boolean }> {
+}): Promise<{ session: Session; cwd: string; gitBranch?: string }> {
   const {
     sessionId,
     agentId,
@@ -285,137 +145,28 @@ export async function createSession(params: {
     ticketTitle,
     ticketUrl,
     branchName,
-    baseBranch,
     createWorktreeFlag,
-    sparseCheckout,
+    prNumber,
     ticketPromptTemplate,
   } = params;
 
-  let workingDir = originalCwd;
-  let worktreePath: string | undefined;
-  let mainRepoPath: string | undefined;
+  // Build isaac flags for worktree/branch/PR
+  let isaacFlags = "";
   let gitBranch: string | null = null;
-  let setupPending = false;
-  let isSparse = false;
-  let pendingSetup: { gitRoot: string; branchName: string; baseBranch: string; originalCwd: string } | null = null;
-
-  // If worktree requested, try fast paths first
-  if (createWorktreeFlag && branchName && baseBranch) {
-    const gitRoot = getGitRoot(originalCwd);
-    if (!gitRoot) {
-      throw new Error(`Not a git repository at: ${originalCwd}`);
+  if (agentId === "claude") {
+    if (createWorktreeFlag && branchName) {
+      isaacFlags += ` --worktree --branch "${branchName}"`;
+      gitBranch = branchName;
     }
-
-    if (sparseCheckout) {
-      // ── Sparse checkout path (always fast) ──
-      const relDir = relative(gitRoot, originalCwd);
-      if (!relDir || relDir === "." || relDir.startsWith("..")) {
-        // cwd is repo root or outside repo — sparse makes no sense, fall through to full
-        log(`\x1b[38;5;141m[session]\x1b[0m Sparse requested at repo root or outside repo, using full checkout`);
-      } else {
-        log(`\x1b[38;5;141m[session]\x1b[0m Sparse checkout for ${relDir}`);
-        const repoName = basename(gitRoot);
-        const worktreesDir = join(gitRoot, "..", `${repoName}-worktrees`);
-        if (!existsSync(worktreesDir)) mkdirSync(worktreesDir, { recursive: true });
-
-        const dirName = branchName.replace(/\//g, "-");
-        let wtPath = join(worktreesDir, dirName);
-        let finalBranchName = branchName;
-        let suffix = 2;
-        while (existsSync(wtPath)) {
-          finalBranchName = `${branchName}-${suffix}`;
-          wtPath = join(worktreesDir, `${dirName}-${suffix}`);
-          suffix++;
-        }
-
-        const baseRef = await resolveBaseRef(baseBranch, gitRoot);
-
-        // Step 1: Create worktree with --no-checkout (instant)
-        const addResult = await gitAsync(
-          ["worktree", "add", "--no-checkout", "-b", finalBranchName, wtPath, baseRef],
-          gitRoot, 30,
-        );
-        if (addResult.exitCode !== 0) {
-          throw new Error(`Failed to create sparse worktree: ${addResult.stderr}`);
-        }
-
-        // Step 2: Set sparse checkout cone for the relative directory
-        const sparseResult = await gitAsync(
-          ["sparse-checkout", "set", "--cone", relDir],
-          wtPath, 15,
-        );
-        if (sparseResult.exitCode !== 0) {
-          logError(`\x1b[38;5;141m[session]\x1b[0m sparse-checkout set failed:`, sparseResult.stderr);
-        }
-
-        // Step 3: Checkout (only fetches files in the cone — fast)
-        const checkoutResult = await gitAsync(["checkout"], wtPath, 120);
-        if (checkoutResult.exitCode !== 0) {
-          logError(`\x1b[38;5;141m[session]\x1b[0m Sparse checkout failed:`, checkoutResult.stderr);
-          // Cleanup partial worktree
-          try { await gitAsync(["worktree", "remove", "--force", wtPath], gitRoot, 15); } catch {}
-          throw new Error(`Sparse checkout failed: ${checkoutResult.stderr}`);
-        }
-
-        const sparseWorkingDir = join(wtPath, relDir);
-        if (!existsSync(sparseWorkingDir)) {
-          logError(`\x1b[38;5;141m[session]\x1b[0m Sparse checkout dir does not exist: ${sparseWorkingDir}, falling back to full checkout`);
-          // Directory doesn't exist on this branch — fall through to full checkout
-        } else {
-          worktreePath = wtPath;
-          workingDir = sparseWorkingDir;
-          mainRepoPath = originalCwd;
-          gitBranch = finalBranchName;
-          isSparse = true;
-
-          worktreeRegistry.register(wtPath, gitRoot, sessionId, finalBranchName);
-          log(`\x1b[38;5;141m[session]\x1b[0m Sparse worktree ready: ${wtPath} (cone: ${relDir})`);
-        }
-      }
-    }
-
-    // Full checkout path (if not handled by sparse above)
-    if (!worktreePath) {
-      // Try registry first — instant reuse
-      const claimed = worktreeRegistry.claim(gitRoot, sessionId);
-      if (claimed) {
-        log(`\x1b[38;5;141m[session]\x1b[0m Reusing worktree from registry: ${claimed}`);
-        const assignResult = await worktreeRegistry.assignBranch(claimed, branchName, baseBranch, gitRoot);
-        if (assignResult.success) {
-          worktreePath = claimed;
-          workingDir = claimed;
-          mainRepoPath = originalCwd;
-          gitBranch = assignResult.branchName;
-          log(`\x1b[38;5;141m[session]\x1b[0m Worktree reuse success: ${claimed} -> ${gitBranch}`);
-        } else {
-          // Reuse failed, release it back and fall through to fresh creation
-          logError(`\x1b[38;5;141m[session]\x1b[0m Worktree reuse failed:`, assignResult.error);
-          worktreeRegistry.release(claimed);
-        }
-      }
-
-      // No registry hit (or reuse failed) — create fresh in background with progress
-      if (!worktreePath) {
-        setupPending = true;
-        // Store context for async completion
-        pendingSetup = { gitRoot, branchName, baseBranch, originalCwd };
-        log(`\x1b[38;5;141m[session]\x1b[0m Pool miss — will create worktree in background`);
-      }
+    if (prNumber) {
+      isaacFlags += ` --pr ${prNumber}`;
+      if (!gitBranch) gitBranch = `PR #${prNumber}`;
     }
   }
 
-  // If no explicit worktree but we're in a worktree, detect the main repo
-  if (!mainRepoPath) {
-    const detectedMainRepo = getMainWorktree(workingDir);
-    if (detectedMainRepo && detectedMainRepo !== workingDir) {
-      mainRepoPath = detectedMainRepo;
-      log(`\x1b[38;5;141m[session]\x1b[0m Detected main repo from worktree: ${mainRepoPath}`);
-    }
-  }
-
-  // Get git branch if not already set from worktree
+  // If not set from flags, detect git branch
   if (!gitBranch) {
-    gitBranch = getGitBranch(workingDir);
+    gitBranch = getGitBranch(originalCwd);
   }
 
   const now = Date.now();
@@ -424,14 +175,12 @@ export async function createSession(params: {
     agentId,
     agentName,
     command,
-    cwd: workingDir,
-    originalCwd: mainRepoPath, // Store mother repo when using worktree
+    cwd: originalCwd,
     gitBranch: gitBranch || undefined,
-    worktreePath,
     createdAt: new Date().toISOString(),
     clients: new Set(),
     outputBuffer: [],
-    status: setupPending ? "setting_up" as any : "idle",
+    status: "idle",
     lastOutputTime: now,
     lastInputTime: 0,
     recentOutputSize: 0,
@@ -439,10 +188,6 @@ export async function createSession(params: {
     customColor,
     nodeId,
     isRestored: false,
-    sparseCheckout: isSparse,
-    setupStatus: setupPending ? "creating_worktree" : undefined,
-    setupProgress: setupPending ? 0 : undefined,
-    setupPhase: setupPending ? "Preparing worktree" : undefined,
     ticketId,
     ticketTitle,
     ticketUrl,
@@ -450,167 +195,66 @@ export async function createSession(params: {
 
   sessions.set(sessionId, session);
 
-  // Helper to spawn PTY and start the agent
-  const startPty = (cwd: string) => {
-    const ptyProcess = spawnPty("/bin/bash", [], {
-      name: "xterm-256color",
-      cwd,
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-        OPENUI_SESSION_ID: sessionId,
-        ...(isSparse ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
-      },
-      rows: 30,
-      cols: 120,
-    });
+  // Spawn PTY
+  const ptyProcess = spawnPty("/bin/bash", [], {
+    name: "xterm-256color",
+    cwd: originalCwd,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      OPENUI_SESSION_ID: sessionId,
+    },
+    rows: 30,
+    cols: 120,
+  });
 
-    session.pty = ptyProcess;
+  session.pty = ptyProcess;
 
-    // Output decay
-    const resetInterval = setInterval(() => {
-      if (!sessions.has(sessionId) || !session.pty) {
-        clearInterval(resetInterval);
-        return;
-      }
-      session.recentOutputSize = Math.max(0, session.recentOutputSize - 50);
-    }, 500);
-
-    // PTY output handler
-    ptyProcess.onData((data: string) => {
-      session.outputBuffer.push(data);
-      if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
-        session.outputBuffer.shift();
-      }
-
-      session.lastOutputTime = Date.now();
-      session.recentOutputSize += data.length;
-
-      // Just broadcast output - status comes from plugin hooks
-      broadcastToSession(session, { type: "output", data });
-    });
-
-    // Run the command (inject plugin-dir for Claude if available)
-    const finalCommand = injectPluginDir(command, agentId);
-    log(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
-
-    setTimeout(() => {
-      ptyProcess.write(`${finalCommand}\r`);
-
-      // If sparse checkout, inject a startup hint after the agent command
-      if (isSparse && session.worktreePath) {
-        const wtGitRoot = getGitRoot(session.worktreePath);
-        const relDir = wtGitRoot ? relative(wtGitRoot, cwd) : cwd;
-        setTimeout(() => {
-          const hint = `Note: This worktree uses sparse checkout. Currently checked out: ${relDir}/\nFiles outside this directory are not available until expanded.\nTo manually expand: git sparse-checkout add <directory>`;
-          ptyProcess.write(hint + "\r");
-        }, 2000);
-      }
-
-      // If there's a ticket URL, send it to the agent after a delay
-      if (ticketUrl) {
-        setTimeout(() => {
-          const defaultTemplate = "Here is the ticket for this session: {{url}}\n\nPlease use the Linear MCP tool or fetch the URL to read the full ticket details before starting work.";
-          const template = ticketPromptTemplate || defaultTemplate;
-          const ticketPrompt = template
-            .replace(/\{\{url\}\}/g, ticketUrl)
-            .replace(/\{\{id\}\}/g, ticketId || "")
-            .replace(/\{\{title\}\}/g, ticketTitle || "");
-          ptyProcess.write(ticketPrompt + "\r");
-        }, isSparse ? 4000 : 2000);
-      }
-    }, 300);
-  };
-
-  if (setupPending && pendingSetup) {
-    // Background worktree creation with progress
-    const { gitRoot, branchName: pendBranch, baseBranch: pendBase, originalCwd: pendCwd } = pendingSetup;
-
-    completeSessionSetup(session, sessionId, gitRoot, pendBranch, pendBase, pendCwd, startPty);
-  } else {
-    // Immediate start — worktree already ready (or no worktree needed)
-    startPty(workingDir);
-  }
-
-  log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}${isSparse ? " (sparse)" : ""}${setupPending ? " (setup pending)" : ""}`);
-  return { session, cwd: workingDir, gitBranch: gitBranch || undefined, setupPending };
-}
-
-/**
- * Complete session setup asynchronously when worktree creation is done in the background.
- * Creates the worktree with progress reporting, then spawns the PTY.
- */
-async function completeSessionSetup(
-  session: Session,
-  sessionId: string,
-  gitRoot: string,
-  branchName: string,
-  baseBranch: string,
-  originalCwd: string,
-  startPty: (cwd: string) => void,
-): Promise<void> {
-  try {
-    const result = await worktreeRegistry.createFresh({
-      gitRoot,
-      sessionId,
-      onProgress: (percent, phase) => {
-        session.setupProgress = percent;
-        session.setupPhase = phase;
-        broadcastToSession(session, {
-          type: "setup_progress",
-          progress: percent,
-          phase,
-        });
-      },
-    });
-
-    if (!result.path || result.error) {
-      logError(`\x1b[38;5;141m[session]\x1b[0m Background worktree creation failed:`, result.error);
-      session.status = "error";
-      session.setupStatus = undefined;
-      session.setupProgress = undefined;
-      session.setupPhase = undefined;
-      broadcastToSession(session, {
-        type: "setup_complete",
-        error: result.error || "Failed to create worktree",
-      });
+  // Output decay
+  const resetInterval = setInterval(() => {
+    if (!sessions.has(sessionId) || !session.pty) {
+      clearInterval(resetInterval);
       return;
     }
+    session.recentOutputSize = Math.max(0, session.recentOutputSize - 50);
+  }, 500);
 
-    // Assign branch to the fresh worktree
-    const assignResult = await worktreeRegistry.assignBranch(result.path, branchName, baseBranch, gitRoot);
-    const gitBranch = assignResult.success ? assignResult.branchName : branchName;
+  // PTY output handler
+  ptyProcess.onData((data: string) => {
+    session.outputBuffer.push(data);
+    if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
+      session.outputBuffer.shift();
+    }
 
-    // Update session with worktree info
-    session.worktreePath = result.path;
-    session.cwd = result.path;
-    session.originalCwd = originalCwd;
-    session.gitBranch = gitBranch;
-    session.setupStatus = "ready";
-    session.setupProgress = undefined;
-    session.setupPhase = undefined;
-    session.status = "idle";
+    session.lastOutputTime = Date.now();
+    session.recentOutputSize += data.length;
 
-    log(`\x1b[38;5;141m[session]\x1b[0m Background worktree ready: ${result.path} -> ${gitBranch}`);
+    broadcastToSession(session, { type: "output", data });
+  });
 
-    // Spawn PTY now that worktree is ready
-    startPty(result.path);
+  // Run the command with plugin-dir and isaac flags
+  const finalCommand = injectPluginDir(command, agentId) + isaacFlags;
+  log(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
 
-    // Notify clients setup is complete
-    broadcastToSession(session, { type: "setup_complete" });
+  setTimeout(() => {
+    ptyProcess.write(`${finalCommand}\r`);
 
-    // Save state with updated worktree info
-    const { saveState } = require("./persistence");
-    saveState(sessions);
-  } catch (error) {
-    logError(`\x1b[38;5;141m[session]\x1b[0m completeSessionSetup failed:`, error);
-    session.status = "error";
-    session.setupStatus = undefined;
-    broadcastToSession(session, {
-      type: "setup_complete",
-      error: String(error),
-    });
-  }
+    // If there's a ticket URL, send it to the agent after a delay
+    if (ticketUrl) {
+      setTimeout(() => {
+        const defaultTemplate = "Here is the ticket for this session: {{url}}\n\nPlease use the Linear MCP tool or fetch the URL to read the full ticket details before starting work.";
+        const template = ticketPromptTemplate || defaultTemplate;
+        const ticketPrompt = template
+          .replace(/\{\{url\}\}/g, ticketUrl)
+          .replace(/\{\{id\}\}/g, ticketId || "")
+          .replace(/\{\{title\}\}/g, ticketTitle || "");
+        ptyProcess.write(ticketPrompt + "\r");
+      }, 2000);
+    }
+  }, 300);
+
+  log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}${isaacFlags ? ` (flags:${isaacFlags})` : ""}`);
+  return { session, cwd: originalCwd, gitBranch: gitBranch || undefined };
 }
 
 export function deleteSession(sessionId: string) {
@@ -618,12 +262,6 @@ export function deleteSession(sessionId: string) {
   if (!session) return false;
 
   if (session.pty) session.pty.kill();
-
-  // Release worktree back to registry for reuse (instead of deleting)
-  if (session.worktreePath) {
-    worktreeRegistry.release(session.worktreePath);
-  }
-
   sessions.delete(sessionId);
   log(`\x1b[38;5;141m[session]\x1b[0m Killed ${sessionId}`);
   return true;
@@ -641,26 +279,24 @@ export function restoreSessions() {
       log(`[restore] Skipping archived session: ${node.sessionId} (${node.customName})`);
       continue;
     }
-    console.log(`[restore] Loading session: ${node.sessionId} (${node.customName}) archived=${node.archived}`);
 
-    // Validate worktree directory still exists
-    let cwd = node.cwd;
-    if (node.worktreePath && !existsSync(node.worktreePath)) {
-      log(`\x1b[38;5;208m[restore]\x1b[0m Worktree deleted: ${node.worktreePath}, falling back to ${node.originalCwd || node.cwd}`);
-      cwd = node.originalCwd || node.cwd;
+    // Migrate old command format
+    if (node.command === "llm agent claude") {
+      node.command = "isaac claude";
+      log(`\x1b[38;5;141m[restore]\x1b[0m Migrated command for ${node.sessionId}: llm agent claude -> isaac claude`);
     }
 
+    console.log(`[restore] Loading session: ${node.sessionId} (${node.customName}) archived=${node.archived}`);
+
     const buffer = loadBuffer(node.sessionId);
-    const gitBranch = getGitBranch(cwd);
+    const gitBranch = getGitBranch(node.cwd);
 
     const session: Session = {
       pty: null,
       agentId: node.agentId,
       agentName: node.agentName,
       command: node.command,
-      cwd,
-      originalCwd: node.originalCwd,
-      worktreePath: node.worktreePath,
+      cwd: node.cwd,
       gitBranch: gitBranch || node.gitBranch || undefined,
       createdAt: node.createdAt,
       clients: new Set(),
@@ -675,10 +311,9 @@ export function restoreSessions() {
       nodeId: node.nodeId,
       isRestored: true,
       autoResumed: node.autoResumed || false,
-      claudeSessionId: node.claudeSessionId,  // Restore Claude session ID for --resume
-      archived: false,  // Active sessions are never archived
-      canvasId: node.canvasId,  // Canvas/tab this agent belongs to
-      sparseCheckout: node.sparseCheckout,
+      claudeSessionId: node.claudeSessionId,
+      archived: false,
+      canvasId: node.canvasId,
       ticketId: node.ticketId,
       ticketTitle: node.ticketTitle,
       ticketUrl: node.ticketUrl,
@@ -686,21 +321,6 @@ export function restoreSessions() {
 
     sessions.set(node.sessionId, session);
     log(`\x1b[38;5;245m[restore]\x1b[0m Restored ${node.sessionId} (${node.agentName}) branch: ${gitBranch || 'none'}`);
-  }
-
-  // Reconcile worktree registry: re-claim worktrees for active sessions
-  reconcileWorktreeRegistry();
-}
-
-/** Reconcile worktree registry with active sessions after restore. */
-function reconcileWorktreeRegistry() {
-  for (const [sessionId, session] of sessions) {
-    if (session.worktreePath && existsSync(session.worktreePath)) {
-      const gitRoot = getGitRoot(session.originalCwd || session.cwd);
-      if (gitRoot) {
-        worktreeRegistry.register(session.worktreePath, gitRoot, sessionId, session.gitBranch || undefined);
-      }
-    }
   }
 }
 
@@ -749,7 +369,6 @@ export function autoResumeSessions() {
             ...process.env,
             TERM: "xterm-256color",
             OPENUI_SESSION_ID: node.sessionId,
-            ...(session.sparseCheckout ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
           },
           rows: 30,
           cols: 120,
@@ -784,7 +403,9 @@ export function autoResumeSessions() {
           finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
 
           const resumeArg = `--resume ${session.claudeSessionId}`;
-          if (finalCommand.includes("llm agent claude")) {
+          if (finalCommand.includes("isaac claude")) {
+            finalCommand = finalCommand.replace("isaac claude", `isaac claude ${resumeArg}`);
+          } else if (finalCommand.includes("llm agent claude")) {
             finalCommand = finalCommand.replace("llm agent claude", `llm agent claude ${resumeArg}`);
           } else if (finalCommand.startsWith("claude")) {
             finalCommand = finalCommand.replace(/^claude(\s|$)/, `claude ${resumeArg}$1`);

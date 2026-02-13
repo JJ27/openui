@@ -1,4 +1,4 @@
-import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock, Loader2 } from "lucide-react";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock } from "lucide-react";
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
@@ -9,7 +9,6 @@ const statusConfig: Record<AgentStatus, { label: string; color: string; isActive
   idle: { label: "Idle", color: "#FBBF24", needsAttention: true },
   disconnected: { label: "Offline", color: "#6B7280" },
   error: { label: "Error", color: "#EF4444", needsAttention: true },
-  setting_up: { label: "Setting up", color: "#60A5FA", isActive: true },
 };
 
 // Tool name display mapping
@@ -36,13 +35,10 @@ interface AgentNodeCardProps {
   status: AgentStatus;
   currentTool?: string;
   cwd?: string;
-  originalCwd?: string; // Mother repo path when using worktrees
   gitBranch?: string;
   ticketId?: string;
   ticketTitle?: string;
   longRunningTool?: boolean;
-  setupProgress?: number;
-  setupPhase?: string;
 }
 
 export function AgentNodeCard({
@@ -54,24 +50,19 @@ export function AgentNodeCard({
   status,
   currentTool,
   cwd,
-  originalCwd,
   gitBranch,
   ticketId,
   ticketTitle,
   longRunningTool,
-  setupProgress,
-  setupPhase,
 }: AgentNodeCardProps) {
   // Available for future use
   void agentId;
-  void setupPhase;
   const statusInfo = statusConfig[status] || statusConfig.idle;
   const isActive = statusInfo.isActive;
   const isToolCalling = status === "tool_calling";
   const needsAttention = statusInfo.needsAttention;
 
-  // Extract directory name - use originalCwd (mother repo) if available, otherwise cwd
-  const displayCwd = originalCwd || cwd;
+  const displayCwd = cwd;
   const dirName = displayCwd ? displayCwd.split("/").pop() || displayCwd : null;
 
   // Get display name for current tool
@@ -144,15 +135,8 @@ export function AgentNodeCard({
             )}
           </div>
           <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
-            {status === "setting_up"
-              ? setupProgress != null
-                ? `Setting up... ${setupProgress}%`
-                : "Setting up..."
-              : statusInfo.label}
+            {statusInfo.label}
           </span>
-          {status === "setting_up" && (
-            <Loader2 className="w-3 h-3 animate-spin" style={{ color: statusInfo.color }} />
-          )}
           {/* Show long-running indicator or current tool */}
           {longRunningTool && (
             <span className="text-[10px] text-zinc-400 flex items-center gap-1">
