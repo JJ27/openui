@@ -19,6 +19,7 @@ import { NewSessionModal } from "./components/NewSessionModal";
 import { Header } from "./components/Header";
 import { CanvasControls } from "./components/CanvasControls";
 import { CanvasTabs } from "./components/CanvasTabs";
+import { AuthBanner } from "./components/AuthBanner";
 
 const nodeTypes = {
   agent: AgentNode,
@@ -346,7 +347,6 @@ function AppContent() {
             color: session.customColor || agent?.color || "#888",
             createdAt: session.createdAt,
             cwd: session.cwd,
-            originalCwd: session.originalCwd,
             gitBranch: session.gitBranch,
             status: session.status || "idle",
             customName: session.customName,
@@ -412,7 +412,6 @@ function AppContent() {
               color: session.customColor || agent?.color || "#888",
               status: session.status,
               cwd: session.cwd,
-              originalCwd: session.originalCwd,
               gitBranch: session.gitBranch,
               isRestored: session.isRestored,
               ticketId: session.ticketId,
@@ -432,7 +431,6 @@ function AppContent() {
             color: session.customColor || agent?.color || "#888",
             createdAt: session.createdAt,
             cwd: session.cwd,
-            originalCwd: session.originalCwd,
             gitBranch: session.gitBranch,
             status: session.status,
             customName: session.customName,
@@ -538,6 +536,7 @@ function AppContent() {
   return (
     <div className="w-screen h-screen bg-canvas overflow-hidden flex flex-col">
       <Header />
+      <AuthBanner />
       <CanvasTabs />
 
       <div className="flex-1 relative">

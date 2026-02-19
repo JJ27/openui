@@ -10,6 +10,7 @@ import {
   Home,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   ChevronDown,
   Sparkles,
   Code,
@@ -20,6 +21,7 @@ import {
   Brain,
   Wand2,
 } from "lucide-react";
+import { useStore } from "../stores/useStore";
 
 const presetColors = [
   "#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#EF4444", "#FBBF24", "#14B8A6"
@@ -84,8 +86,16 @@ export function ForkDialog({
   const [branchName, setBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("main");
   const [createWorktree, setCreateWorktree] = useState(true);
-
   const [isForking, setIsForking] = useState(false);
+
+  // Conflict warning
+  const sessions = useStore((state) => state.sessions);
+  const effectiveCwd = cwd || parentCwd;
+  const conflictingAgentCount = !branchName
+    ? Array.from(sessions.values()).filter(
+        (s) => s.cwd === effectiveCwd && !s.archived && s.status !== "disconnected"
+      ).length
+    : 0;
 
   // Reset form when modal opens
   useEffect(() => {
@@ -142,7 +152,11 @@ export function ForkDialog({
       color,
       icon,
       ...(cwd && cwd !== parentCwd ? { cwd } : {}),
-      ...(branchName ? { branchName, baseBranch, createWorktree } : {}),
+      ...(branchName ? {
+        branchName,
+        baseBranch,
+        createWorktree,
+      } : {}),
     });
   };
 
@@ -409,6 +423,17 @@ export function ForkDialog({
                             </div>
                           </>
                         )}
+                      </div>
+                    )}
+
+                    {/* Conflict warning when no worktree */}
+                    {!branchName && conflictingAgentCount > 0 && (
+                      <div className="flex items-start gap-2 px-3 py-2 rounded bg-amber-500/10 border border-amber-500/20">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                        <p className="text-[11px] text-amber-400 leading-relaxed">
+                          {conflictingAgentCount} other agent{conflictingAgentCount > 1 ? "s are" : " is"} working in this directory.
+                          Write operations may conflict.
+                        </p>
                       </div>
                     )}
                   </div>

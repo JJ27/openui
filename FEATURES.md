@@ -57,7 +57,7 @@ OpenUI auto-updates on startup via git pull. Choose between `stable` and `beta` 
 
 ### Prerequisites
 - **Bun** (v1.0+) - Install with: `curl -fsSL https://bun.sh/install | bash`
-- **Claude Code** - Available via `llm agent claude`
+- **Claude Code** - Available via `isaac claude`
 
 ### Install
 

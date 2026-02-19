@@ -13,6 +13,7 @@ import {
   Loader2,
   GitBranch,
   AlertCircle,
+  AlertTriangle,
   Home,
   ArrowUp,
   Github,
@@ -151,6 +152,7 @@ export function NewSessionModal({
     addSession,
     updateSession,
     nodes,
+    sessions,
     launchCwd,
     activeCanvasId,
   } = useStore();
@@ -176,7 +178,6 @@ export function NewSessionModal({
   const [baseBranch, setBaseBranch] = useState("main");
   const [createWorktree, setCreateWorktree] = useState(true);
   const [showBranchOptions, setShowBranchOptions] = useState(false);
-
   // Directory picker state
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [dirBrowsePath, setDirBrowsePath] = useState("");
@@ -204,6 +205,18 @@ export function NewSessionModal({
   // Track if we've initialized for this modal open
   const [initialized, setInitialized] = useState(false);
 
+  // Conflict warning: count other active agents sharing the same cwd (excluding the session being replaced)
+  const effectiveCwd = cwd || (isReplacing ? existingSession?.cwd : null) || launchCwd;
+  const conflictingAgentCount = !branchName
+    ? Array.from(sessions.values()).filter(
+        (s) =>
+          s.cwd === effectiveCwd &&
+          !s.archived &&
+          s.status !== "disconnected" &&
+          (!isReplacing || s.id !== existingNodeId)
+      ).length
+    : 0;
+
   // Reset form when modal opens (only once per open)
   useEffect(() => {
     if (open && !initialized) {
@@ -223,6 +236,11 @@ export function NewSessionModal({
         setCount(1);
       }
       setActiveTab("blank");
+      // Reset branch/worktree state
+      setBranchName("");
+      setBaseBranch("main");
+      setCreateWorktree(true);
+      setShowBranchOptions(false);
       // Reset GitHub state
       setSelectedGithubIssue(null);
       setGithubIssues([]);
@@ -1166,6 +1184,17 @@ export function NewSessionModal({
                               </div>
                             </>
                           )}
+                        </div>
+                      )}
+
+                      {/* Conflict warning when no worktree */}
+                      {!branchName && conflictingAgentCount > 0 && (
+                        <div className="flex items-start gap-2 px-3 py-2 rounded bg-amber-500/10 border border-amber-500/20">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                          <p className="text-[11px] text-amber-400 leading-relaxed">
+                            {conflictingAgentCount} other agent{conflictingAgentCount > 1 ? "s are" : " is"} working in this directory.
+                            Write operations may conflict.
+                          </p>
                         </div>
                       )}
                     </div>

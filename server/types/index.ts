@@ -10,9 +10,7 @@ export interface Session {
   agentName: string;
   command: string;
   cwd: string;
-  originalCwd?: string; // The mother repo path when using worktrees
   gitBranch?: string;
-  worktreePath?: string;
   createdAt: string;
   clients: Set<ServerWebSocket<WebSocketData>>;
   outputBuffer: string[];
@@ -73,9 +71,6 @@ export interface PersistedNode {
   archived?: boolean;
   autoResumed?: boolean;  // True if session was auto-resumed on startup
   canvasId: string;  // Canvas/tab this agent belongs to
-  // Worktree/git metadata
-  worktreePath?: string;
-  originalCwd?: string;
   gitBranch?: string;
   // Ticket/Issue info
   ticketId?: string;

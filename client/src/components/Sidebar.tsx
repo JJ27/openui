@@ -165,7 +165,6 @@ export function Sidebar() {
       color: data.customColor || opts.color || session.color,
       createdAt: new Date().toISOString(),
       cwd: data.cwd || session.cwd,
-      originalCwd: data.originalCwd,
       gitBranch: data.gitBranch,
       status: "running",
       customName: data.customName,

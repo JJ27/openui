@@ -70,7 +70,6 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           status={status}
           currentTool={currentTool}
           cwd={session?.cwd}
-          originalCwd={session?.originalCwd}
           gitBranch={session?.gitBranch}
           ticketId={session?.ticketId}
           ticketTitle={session?.ticketTitle}

@@ -35,7 +35,6 @@ interface AgentNodeCardProps {
   status: AgentStatus;
   currentTool?: string;
   cwd?: string;
-  originalCwd?: string; // Mother repo path when using worktrees
   gitBranch?: string;
   ticketId?: string;
   ticketTitle?: string;
@@ -51,21 +50,19 @@ export function AgentNodeCard({
   status,
   currentTool,
   cwd,
-  originalCwd,
   gitBranch,
   ticketId,
   ticketTitle,
   longRunningTool,
 }: AgentNodeCardProps) {
-  // agentId is available for future use if needed
+  // Available for future use
   void agentId;
   const statusInfo = statusConfig[status] || statusConfig.idle;
   const isActive = statusInfo.isActive;
   const isToolCalling = status === "tool_calling";
   const needsAttention = statusInfo.needsAttention;
 
-  // Extract directory name - use originalCwd (mother repo) if available, otherwise cwd
-  const displayCwd = originalCwd || cwd;
+  const displayCwd = cwd;
   const dirName = displayCwd ? displayCwd.split("/").pop() || displayCwd : null;
 
   // Get display name for current tool

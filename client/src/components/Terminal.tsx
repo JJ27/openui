@@ -136,6 +136,12 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               ...(msg.gitBranch ? { gitBranch: msg.gitBranch } : {}),
               longRunningTool: msg.longRunningTool || false,
             });
+          } else if (msg.type === "auth_required") {
+            // OAuth detected during session start — show auth banner
+            useStore.getState().setAuthRequired(msg.url);
+          } else if (msg.type === "auth_complete") {
+            // Auth completed — dismiss banner
+            useStore.getState().clearAuthRequired();
           }
         } catch (e) {
           term.write(event.data);

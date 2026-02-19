@@ -27,7 +27,7 @@ OpenUI gives you a visual command center where each agent is a node on a canvas:
 
 ### Prerequisites
 - **Bun** (v1.0+) - Install with: `curl -fsSL https://bun.sh/install | bash`
-- **Claude Code** - Available via `llm agent claude` (Databricks) or `claude` (public)
+- **Claude Code** - Available via `isaac claude` (Databricks) or `claude` (public)
   - For Databricks: Already installed on dev machines
   - For public: Install from [claude.com/claude-code](https://claude.com/claude-code)
 
@@ -149,7 +149,7 @@ OpenUI runs a local server that:
 
 ### Agent Commands
 
-By default, OpenUI uses `llm agent claude` to spawn Claude Code instances. This works seamlessly with:
+By default, OpenUI uses `isaac claude` to spawn Claude Code instances. This works seamlessly with:
 - Session resume via `--resume <session_id>`
 - Plugin injection via `--plugin-dir`
 - All standard Claude Code features
@@ -201,7 +201,7 @@ For development, OpenUI automatically loads the plugin from the repo's `claude-c
 
 You can also test manually:
 ```bash
-llm agent claude --plugin-dir $(pwd)/claude-code-plugin
+isaac claude --plugin-dir $(pwd)/claude-code-plugin
 ```
 
 ### Optional: Ralph Loop
@@ -227,15 +227,15 @@ Ralph includes rate limiting, circuit breakers, and intelligent exit detection t
 
 ### Git Worktrees
 
-When starting sessions from GitHub issues, OpenUI can automatically create git worktrees for branch isolation:
+When starting sessions with a branch, OpenUI passes `--worktree --branch` flags to isaac, which handles worktree creation and lifecycle automatically:
 
-- Each issue gets its own worktree in `../<repo>-worktrees/<branch-name>/`
+- Each branch gets its own worktree managed by isaac
 - Agents work independently without affecting your main worktree
 
 ## Troubleshooting
 
 ### Sessions show "disconnected"
-- Check that `llm agent claude` works in your terminal
+- Check that `isaac claude` works in your terminal
 - Ensure the Claude Code plugin is installed (should be automatic)
 - Click the "Resume" button to restart the session
 

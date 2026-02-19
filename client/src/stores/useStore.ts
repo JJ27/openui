@@ -30,7 +30,6 @@ export interface AgentSession {
   color: string;
   createdAt: string;
   cwd: string;
-  originalCwd?: string; // Mother repo path when using worktrees
   gitBranch?: string;
   status: AgentStatus;
   customName?: string;
@@ -104,6 +103,12 @@ interface AppState {
   // Auto-resume progress
   autoResumeProgress: { total: number; completed: number; current: string | null; isActive: boolean } | null;
   setAutoResumeProgress: (progress: { total: number; completed: number; current: string | null; isActive: boolean } | null) => void;
+
+  // Auth state (OAuth detection from session start queue)
+  authRequired: boolean;
+  authUrl: string | null;
+  setAuthRequired: (url: string) => void;
+  clearAuthRequired: () => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -273,6 +278,12 @@ export const useStore = create<AppState>((set) => ({
   // Auto-resume progress
   autoResumeProgress: null,
   setAutoResumeProgress: (progress) => set({ autoResumeProgress: progress }),
+
+  // Auth state
+  authRequired: false,
+  authUrl: null,
+  setAuthRequired: (url) => set({ authRequired: true, authUrl: url }),
+  clearAuthRequired: () => set({ authRequired: false, authUrl: null }),
 
   loadState: async () => {
     const showArchived = useStore.getState().showArchived;
