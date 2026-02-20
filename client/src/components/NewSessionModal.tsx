@@ -176,7 +176,6 @@ export function NewSessionModal({
   // Git branch state
   const [branchName, setBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("main");
-  const [createWorktree, setCreateWorktree] = useState(true);
   const [showBranchOptions, setShowBranchOptions] = useState(false);
   // Directory picker state
   const [showDirPicker, setShowDirPicker] = useState(false);
@@ -239,7 +238,6 @@ export function NewSessionModal({
       // Reset branch/worktree state
       setBranchName("");
       setBaseBranch("main");
-      setCreateWorktree(true);
       setShowBranchOptions(false);
       // Reset GitHub state
       setSelectedGithubIssue(null);
@@ -411,7 +409,6 @@ export function NewSessionModal({
             ...(branchName && {
               branchName,
               baseBranch,
-              createWorktree,
             }),
           }),
         });
@@ -472,7 +469,6 @@ export function NewSessionModal({
               ...(i === 0 && branchName && {
                 branchName,
                 baseBranch,
-                createWorktree,
               }),
             }),
           });
@@ -562,7 +558,6 @@ export function NewSessionModal({
                       setSelectedGithubIssue(null);
                       setBranchName("");
                       setBaseBranch("main");
-                      setCreateWorktree(true);
                       setShowBranchOptions(false);
                     }}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
@@ -578,7 +573,6 @@ export function NewSessionModal({
                       setActiveTab("github");
                       setBranchName("");
                       setBaseBranch("main");
-                      setCreateWorktree(true);
                       setShowBranchOptions(false);
                     }}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
@@ -767,15 +761,6 @@ export function NewSessionModal({
                             />
                           </div>
 
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={createWorktree}
-                              onChange={(e) => setCreateWorktree(e.target.checked)}
-                              className="w-4 h-4 rounded border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
-                            />
-                            <span className="text-sm text-zinc-300">Create git worktree</span>
-                          </label>
                         </>
                       )}
                     </div>
@@ -1163,20 +1148,10 @@ export function NewSessionModal({
                                 />
                               </div>
 
-                              <label className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={createWorktree}
-                                  onChange={(e) => setCreateWorktree(e.target.checked)}
-                                  className="w-4 h-4 rounded border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
-                                />
-                                <span className="text-sm text-zinc-300">Create git worktree</span>
-                              </label>
-
                               <div className="flex items-start gap-2 px-3 py-2 rounded bg-zinc-900/50 border border-zinc-800">
-                                <AlertCircle className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
+                                <GitBranch className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
                                 <p className="text-[11px] text-zinc-500 leading-relaxed">
-                                  Files will be isolated in a separate directory at{" "}
+                                  A worktree will be created at{" "}
                                   <code className="text-zinc-400">
                                     {(cwd || launchCwd || "repo").split("/").pop()}-worktrees/{branchName.replace(/\//g, "-")}
                                   </code>

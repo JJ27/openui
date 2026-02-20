@@ -233,7 +233,6 @@ apiRoutes.post("/sessions", async (c) => {
     ticketUrl,
     branchName,
     baseBranch,
-    createWorktree: createWorktreeFlag,
     prNumber,
   } = body;
 
@@ -255,7 +254,6 @@ apiRoutes.post("/sessions", async (c) => {
       ticketUrl,
       branchName,
       baseBranch,
-      createWorktreeFlag,
       prNumber,
       ticketPromptTemplate: undefined,
     });
@@ -425,7 +423,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
 
   // Build isaac flags for worktree/branch/PR
   let isaacFlags = "";
-  if (body.createWorktree && body.branchName) {
+  if (body.branchName) {
     // Pre-create branch from baseBranch if it doesn't exist yet
     if (body.baseBranch && DEFAULT_CLAUDE_COMMAND === "isaac claude") {
       const branchExists = spawnSync(["git", "rev-parse", "--verify", body.branchName], {
@@ -446,7 +444,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     if (!gitBranch) gitBranch = `PR #${body.prNumber}`;
   }
 
-  if (body.cwd && !body.createWorktree) {
+  if (body.cwd && !body.branchName) {
     // Custom directory without worktree — detect git branch
     gitBranch = getGitBranch(effectiveCwd) || undefined;
   }
