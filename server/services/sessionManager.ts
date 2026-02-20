@@ -134,7 +134,6 @@ export async function createSession(params: {
   ticketUrl?: string;
   branchName?: string;
   baseBranch?: string;
-  createWorktreeFlag?: boolean;
   prNumber?: string;
   ticketPromptTemplate?: string;
 }): Promise<{ session: Session; cwd: string; gitBranch?: string }> {
@@ -152,7 +151,6 @@ export async function createSession(params: {
     ticketUrl,
     branchName,
     baseBranch,
-    createWorktreeFlag,
     prNumber,
     ticketPromptTemplate,
   } = params;
@@ -161,7 +159,7 @@ export async function createSession(params: {
   let isaacFlags = "";
   let gitBranch: string | null = null;
   if (agentId === "claude") {
-    if (createWorktreeFlag && branchName) {
+    if (branchName) {
       // Pre-create branch from baseBranch if the branch doesn't exist yet
       if (baseBranch && HAS_ISAAC) {
         const branchExists = spawnSync(["git", "rev-parse", "--verify", branchName], {

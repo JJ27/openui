@@ -10,7 +10,6 @@ interface SettingsModalProps {
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [defaultBaseBranch, setDefaultBaseBranch] = useState("main");
-  const [createWorktree, setCreateWorktree] = useState(true);
   const [updateChannel, setUpdateChannel] = useState("stable");
   const [isSaving, setIsSaving] = useState(false);
 
@@ -21,7 +20,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         .then((res) => res.json())
         .then((config) => {
           setDefaultBaseBranch(config.defaultBaseBranch || "main");
-          setCreateWorktree(config.createWorktree ?? true);
           setUpdateChannel(config.updateChannel || "stable");
         })
         .catch(console.error);
@@ -37,7 +35,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           defaultBaseBranch,
-          createWorktree,
           updateChannel,
         }),
       });
@@ -136,19 +133,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       />
                     </div>
 
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={createWorktree}
-                        onChange={(e) => setCreateWorktree(e.target.checked)}
-                        className="w-4 h-4 rounded border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
-                      />
-                      <span className="text-sm text-zinc-300">
-                        Create git worktree for new branches
-                      </span>
-                    </label>
-                    <p className="text-xs text-zinc-600 ml-6">
-                      Each branch gets an isolated working directory
+                    <p className="text-xs text-zinc-500">
+                      Branches automatically use git worktrees for isolation
                     </p>
                   </div>
                 </div>

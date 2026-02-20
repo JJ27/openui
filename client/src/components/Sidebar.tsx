@@ -135,7 +135,6 @@ export function Sidebar() {
         ...(opts.branchName ? {
           branchName: opts.branchName,
           baseBranch: opts.baseBranch,
-          createWorktree: opts.createWorktree,
         } : {}),
       }),
     });

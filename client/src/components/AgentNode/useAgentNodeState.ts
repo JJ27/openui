@@ -80,7 +80,6 @@ export function useAgentNodeState(
         ...(opts.branchName ? {
           branchName: opts.branchName,
           baseBranch: opts.baseBranch,
-          createWorktree: opts.createWorktree,
         } : {}),
       }),
     });
