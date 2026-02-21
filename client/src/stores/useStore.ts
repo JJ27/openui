@@ -43,6 +43,8 @@ export interface AgentSession {
   currentTool?: string;
   // Whether the current tool has been running for a long time (> 5 min)
   longRunningTool?: boolean;
+  // Token usage from cost cache
+  tokens?: number;
   // Archive status
   archived?: boolean;
 }
@@ -109,6 +111,10 @@ interface AppState {
   authUrl: string | null;
   setAuthRequired: (url: string) => void;
   clearAuthRequired: () => void;
+
+  // Pending resume conversation (from search modal → new session modal bridge)
+  pendingResumeConversation: any | null;
+  setPendingResumeConversation: (conv: any | null) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -284,6 +290,9 @@ export const useStore = create<AppState>((set) => ({
   authUrl: null,
   setAuthRequired: (url) => set({ authRequired: true, authUrl: url }),
   clearAuthRequired: () => set({ authRequired: false, authUrl: null }),
+
+  pendingResumeConversation: null,
+  setPendingResumeConversation: (conv) => set({ pendingResumeConversation: conv }),
 
   loadState: async () => {
     const showArchived = useStore.getState().showArchived;

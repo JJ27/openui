@@ -3,6 +3,7 @@ import type { Agent } from "../types";
 import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
+import { getTokensForSession } from "../services/costCache";
 import { spawnSync } from "bun";
 import { join } from "path";
 import { homedir } from "os";
@@ -162,6 +163,7 @@ apiRoutes.get("/sessions", (c) => {
         ticketTitle: session.ticketTitle,
         canvasId: session.canvasId, // Canvas/tab this agent belongs to
         longRunningTool: session.longRunningTool || false,
+        tokens: session.tokens ?? getTokensForSession(session.claudeSessionId),
       };
     });
   return c.json(sessionList);
@@ -614,6 +616,23 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
   return c.json({ success: true });
 });
 
+// Session context endpoint for plugin hook systemMessage injection
+apiRoutes.get("/sessions/:sessionId/context", (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  return c.json({
+    customName: session.customName || null,
+    notes: session.notes || null,
+    ticketId: session.ticketId || null,
+    ticketTitle: session.ticketTitle || null,
+    ticketUrl: session.ticketUrl || null,
+  });
+});
+
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
   const body = await c.req.json();
@@ -654,6 +673,10 @@ apiRoutes.post("/status-update", async (c) => {
     if (cwd && cwd !== session.cwd) {
       session.cwd = cwd;
     }
+
+    // Refresh token count from cost cache
+    const tokens = getTokensForSession(session.claudeSessionId);
+    if (tokens != null) session.tokens = tokens;
 
     // Signal the start queue that this session has completed OAuth/initialization
     if (hookEvent === "SessionStart" && openuiSessionId) {

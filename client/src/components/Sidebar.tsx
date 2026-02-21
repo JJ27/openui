@@ -136,6 +136,7 @@ export function Sidebar() {
           branchName: opts.branchName,
           baseBranch: opts.baseBranch,
         } : {}),
+        ...(opts.prNumber ? { prNumber: opts.prNumber } : {}),
       }),
     });
     if (!res.ok) return;

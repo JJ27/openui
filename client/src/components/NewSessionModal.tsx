@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -155,6 +155,8 @@ export function NewSessionModal({
     sessions,
     launchCwd,
     activeCanvasId,
+    pendingResumeConversation,
+    setPendingResumeConversation,
   } = useStore();
 
   // Get ReactFlow instance to access viewport
@@ -177,6 +179,9 @@ export function NewSessionModal({
   const [branchName, setBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("main");
   const [showBranchOptions, setShowBranchOptions] = useState(false);
+  const defaultBaseBranchRef = useRef("main");
+  const [branchMode, setBranchMode] = useState<"branch" | "pr">("branch");
+  const [prNumber, setPrNumber] = useState("");
   // Directory picker state
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [dirBrowsePath, setDirBrowsePath] = useState("");
@@ -206,7 +211,7 @@ export function NewSessionModal({
 
   // Conflict warning: count other active agents sharing the same cwd (excluding the session being replaced)
   const effectiveCwd = cwd || (isReplacing ? existingSession?.cwd : null) || launchCwd;
-  const conflictingAgentCount = !branchName
+  const conflictingAgentCount = !branchName && !prNumber
     ? Array.from(sessions.values()).filter(
         (s) =>
           s.cwd === effectiveCwd &&
@@ -219,6 +224,16 @@ export function NewSessionModal({
   // Reset form when modal opens (only once per open)
   useEffect(() => {
     if (open && !initialized) {
+      // Fetch default base branch from settings
+      fetch("/api/settings")
+        .then((res) => res.json())
+        .then((config) => {
+          const base = config.defaultBaseBranch || "main";
+          defaultBaseBranchRef.current = base;
+          setBaseBranch(base);
+        })
+        .catch(() => {});
+
       if (existingSession) {
         // Pre-fill from existing session
         const agent = agents.find((a) => a.id === existingSession.agentId);
@@ -237,8 +252,10 @@ export function NewSessionModal({
       setActiveTab("blank");
       // Reset branch/worktree state
       setBranchName("");
-      setBaseBranch("main");
+      setBaseBranch(defaultBaseBranchRef.current);
       setShowBranchOptions(false);
+      setBranchMode("branch");
+      setPrNumber("");
       // Reset GitHub state
       setSelectedGithubIssue(null);
       setGithubIssues([]);
@@ -249,6 +266,20 @@ export function NewSessionModal({
       setResumeError(null);
       setResumeQuery("");
       setInitialized(true);
+
+      // Handle pending resume from conversation search modal
+      if (pendingResumeConversation) {
+        setActiveTab("resume");
+        setSelectedConversation(pendingResumeConversation);
+        // Auto-select Claude agent
+        const claudeAgent = agents.find((a) => a.id === "claude");
+        if (claudeAgent) setSelectedAgent(claudeAgent);
+        // Auto-set working directory
+        if (pendingResumeConversation.projectPath) setCwd(pendingResumeConversation.projectPath);
+        setPendingResumeConversation(null);
+        // Load projects for the Resume tab
+        loadResumeProjects();
+      }
     } else if (!open) {
       // Reset flags when modal closes
       setInitialized(false);
@@ -410,6 +441,7 @@ export function NewSessionModal({
               branchName,
               baseBranch,
             }),
+            ...(prNumber && { prNumber }),
           }),
         });
 
@@ -470,6 +502,7 @@ export function NewSessionModal({
                 branchName,
                 baseBranch,
               }),
+              ...(i === 0 && prNumber && { prNumber }),
             }),
           });
 
@@ -557,8 +590,10 @@ export function NewSessionModal({
                       setActiveTab("blank");
                       setSelectedGithubIssue(null);
                       setBranchName("");
-                      setBaseBranch("main");
+                      setBaseBranch(defaultBaseBranchRef.current);
                       setShowBranchOptions(false);
+                      setBranchMode("branch");
+                      setPrNumber("");
                     }}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                       activeTab === "blank"
@@ -572,7 +607,7 @@ export function NewSessionModal({
                     onClick={() => {
                       setActiveTab("github");
                       setBranchName("");
-                      setBaseBranch("main");
+                      setBaseBranch(defaultBaseBranchRef.current);
                       setShowBranchOptions(false);
                     }}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
@@ -1124,39 +1159,88 @@ export function NewSessionModal({
 
                       {showBranchOptions && (
                         <div className="pl-3 space-y-3 border-l-2 border-zinc-700/50">
-                          <div>
-                            <label className="text-xs text-zinc-500 mb-1.5 block">Branch name</label>
-                            <input
-                              type="text"
-                              value={branchName}
-                              onChange={(e) => setBranchName(e.target.value)}
-                              placeholder="feature/my-branch"
-                              className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
-                            />
+                          {/* Mode toggle: Branch vs PR */}
+                          <div className="flex gap-1 p-0.5 rounded-md bg-canvas border border-border">
+                            <button
+                              type="button"
+                              onClick={() => { setBranchMode("branch"); setPrNumber(""); }}
+                              className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                branchMode === "branch"
+                                  ? "bg-surface-active text-white"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                              }`}
+                            >
+                              Branch
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setBranchMode("pr"); setBranchName(""); setBaseBranch(defaultBaseBranchRef.current); }}
+                              className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                branchMode === "pr"
+                                  ? "bg-surface-active text-white"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                              }`}
+                            >
+                              PR #
+                            </button>
                           </div>
 
-                          {branchName && (
+                          {branchMode === "branch" ? (
                             <>
                               <div>
-                                <label className="text-xs text-zinc-500 mb-1.5 block">Base branch</label>
+                                <label className="text-xs text-zinc-500 mb-1.5 block">Branch name</label>
                                 <input
                                   type="text"
-                                  value={baseBranch}
-                                  onChange={(e) => setBaseBranch(e.target.value)}
-                                  placeholder="main"
+                                  value={branchName}
+                                  onChange={(e) => setBranchName(e.target.value)}
+                                  placeholder="feature/my-branch"
                                   className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
                                 />
                               </div>
 
-                              <div className="flex items-start gap-2 px-3 py-2 rounded bg-zinc-900/50 border border-zinc-800">
-                                <GitBranch className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
-                                <p className="text-[11px] text-zinc-500 leading-relaxed">
-                                  A worktree will be created at{" "}
-                                  <code className="text-zinc-400">
-                                    {(cwd || launchCwd || "repo").split("/").pop()}-worktrees/{branchName.replace(/\//g, "-")}
-                                  </code>
-                                </p>
+                              {branchName && (
+                                <>
+                                  <div>
+                                    <label className="text-xs text-zinc-500 mb-1.5 block">Base branch</label>
+                                    <input
+                                      type="text"
+                                      value={baseBranch}
+                                      onChange={(e) => setBaseBranch(e.target.value)}
+                                      placeholder="main"
+                                      className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                                    />
+                                  </div>
+
+                                  <div className="flex items-start gap-2 px-3 py-2 rounded bg-zinc-900/50 border border-zinc-800">
+                                    <GitBranch className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
+                                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                      A worktree will be created in an isolated directory
+                                    </p>
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <div>
+                                <label className="text-xs text-zinc-500 mb-1.5 block">PR number</label>
+                                <input
+                                  type="text"
+                                  value={prNumber}
+                                  onChange={(e) => setPrNumber(e.target.value.replace(/[^0-9]/g, ""))}
+                                  placeholder="123"
+                                  className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                                />
                               </div>
+
+                              {prNumber && (
+                                <div className="flex items-start gap-2 px-3 py-2 rounded bg-zinc-900/50 border border-zinc-800">
+                                  <GitBranch className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
+                                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                                    Will checkout PR #{prNumber} in an isolated worktree
+                                  </p>
+                                </div>
+                              )}
                             </>
                           )}
                         </div>

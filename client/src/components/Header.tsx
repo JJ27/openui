@@ -1,12 +1,21 @@
-import { useState, useMemo } from "react";
-import { Plus, Folder, Settings, Archive, Loader2 } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { Plus, Folder, Settings, Archive, Loader2, Search } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "../stores/useStore";
 import { SettingsModal } from "./SettingsModal";
+import { ConversationSearchModal } from "./ConversationSearchModal";
 
 export function Header() {
   const { setAddAgentModalOpen, sessions, launchCwd, showArchived, setShowArchived, autoResumeProgress } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Listen for Cmd+K toggle event from App.tsx keyboard handler
+  useEffect(() => {
+    const handler = () => setSearchOpen((prev) => !prev);
+    window.addEventListener("openui:toggle-search", handler);
+    return () => window.removeEventListener("openui:toggle-search", handler);
+  }, []);
 
   // Count active (non-archived) sessions by status
   const statusCounts = useMemo(() => {
@@ -104,6 +113,13 @@ export function Header() {
       {/* Right side buttons */}
       <div className="flex items-center gap-2">
         <button
+          onClick={() => setSearchOpen(true)}
+          className="p-2 rounded-md text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
+          title="Search Conversations (Cmd+K)"
+        >
+          <Search className="w-4 h-4" />
+        </button>
+        <button
           onClick={() => setShowArchived(!showArchived)}
           className={`p-2 rounded-md transition-colors ${
             showArchived
@@ -133,6 +149,16 @@ export function Header() {
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ConversationSearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onResume={(conv) => {
+          setSearchOpen(false);
+          // Store the conversation to resume, then open the new agent modal
+          useStore.getState().setPendingResumeConversation(conv);
+          setAddAgentModalOpen(true);
+        }}
+      />
     </header>
   );
 }

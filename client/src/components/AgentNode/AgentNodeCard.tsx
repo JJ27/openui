@@ -1,4 +1,4 @@
-import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock } from "lucide-react";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock, Zap } from "lucide-react";
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
@@ -10,6 +10,12 @@ const statusConfig: Record<AgentStatus, { label: string; color: string; isActive
   disconnected: { label: "Offline", color: "#6B7280" },
   error: { label: "Error", color: "#EF4444", needsAttention: true },
 };
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tokens`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K tokens`;
+  return `${n} tokens`;
+}
 
 // Tool name display mapping
 const toolDisplayNames: Record<string, string> = {
@@ -39,6 +45,7 @@ interface AgentNodeCardProps {
   ticketId?: string;
   ticketTitle?: string;
   longRunningTool?: boolean;
+  tokens?: number;
 }
 
 export function AgentNodeCard({
@@ -54,6 +61,7 @@ export function AgentNodeCard({
   ticketId,
   ticketTitle,
   longRunningTool,
+  tokens,
 }: AgentNodeCardProps) {
   // Available for future use
   void agentId;
@@ -186,8 +194,8 @@ export function AgentNodeCard({
           </div>
         )}
 
-        {/* Repo & Branch */}
-        {(dirName || gitBranch) && (
+        {/* Repo, Branch & Tokens */}
+        {(dirName || gitBranch || (tokens != null && tokens > 0)) && (
           <div className="mt-2 space-y-1">
             {dirName && (
               <div className="flex items-center gap-1.5">
@@ -199,6 +207,12 @@ export function AgentNodeCard({
               <div className="flex items-center gap-1.5">
                 <GitBranch className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
                 <span className="text-[11px] text-purple-400 font-mono truncate">{gitBranch}</span>
+              </div>
+            )}
+            {tokens != null && tokens > 0 && (
+              <div className="flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
+                <span className="text-[11px] text-zinc-400 font-mono">{formatTokens(tokens)}</span>
               </div>
             )}
           </div>

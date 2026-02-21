@@ -194,6 +194,16 @@ function AppContent() {
   // Keyboard shortcuts for canvas switching
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // Cmd/Ctrl + K: Open conversation search (works even from inputs)
+      if (isMod && e.key === "k") {
+        e.preventDefault();
+        // Toggle the search modal via a custom event
+        window.dispatchEvent(new CustomEvent("openui:toggle-search"));
+        return;
+      }
+
       // Skip if typing in input/textarea
       const target = e.target as HTMLElement;
       if (
@@ -206,8 +216,6 @@ function AppContent() {
 
       // Get fresh state on each keypress to avoid stale closures
       const { canvases, addCanvas } = useStore.getState();
-
-      const isMod = e.metaKey || e.ctrlKey;
 
       // Cmd/Ctrl + Shift + 1-9: Switch to canvas by index
       if (isMod && e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "9") {
@@ -263,6 +271,9 @@ function AppContent() {
                 }
                 if ((existing.longRunningTool || false) !== (sessionData.longRunningTool || false)) {
                   updates.longRunningTool = sessionData.longRunningTool || false;
+                }
+                if (sessionData.tokens != null && existing.tokens !== sessionData.tokens) {
+                  updates.tokens = sessionData.tokens;
                 }
                 if (Object.keys(updates).length > 0) {
                   updateSession(sessionData.nodeId, updates);
