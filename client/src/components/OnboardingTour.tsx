@@ -9,8 +9,6 @@ import {
   ArrowRight,
 } from "lucide-react";
 
-const STORAGE_KEY = "openui-tour-v1";
-
 // --- Welcome Phase Data ---
 const features = [
   {
@@ -106,11 +104,15 @@ export function OnboardingTour() {
   const [visible, setVisible] = useState(false);
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
 
-  // Check localStorage on mount
+  // Check server-side config on mount
   useEffect(() => {
-    if (localStorage.getItem(STORAGE_KEY)) return;
-    const timer = setTimeout(() => setVisible(true), 400);
-    return () => clearTimeout(timer);
+    fetch("/api/settings")
+      .then((res) => res.json())
+      .then((config) => {
+        if (config.tourCompleted) return;
+        setTimeout(() => setVisible(true), 400);
+      })
+      .catch(() => {});
   }, []);
 
   // Measure target element for current step
@@ -144,8 +146,12 @@ export function OnboardingTour() {
   };
 
   const complete = () => {
-    localStorage.setItem(STORAGE_KEY, "true");
     setVisible(false);
+    fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tourCompleted: true }),
+    }).catch(() => {});
   };
 
   if (!visible) return null;
