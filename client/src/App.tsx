@@ -18,6 +18,7 @@ import { Sidebar } from "./components/Sidebar";
 import { NewSessionModal } from "./components/NewSessionModal";
 import { Header } from "./components/Header";
 import { CanvasControls } from "./components/CanvasControls";
+import { OnboardingTour } from "./components/OnboardingTour";
 import { CanvasTabs } from "./components/CanvasTabs";
 import { AuthBanner } from "./components/AuthBanner";
 
@@ -550,7 +551,7 @@ function AppContent() {
       <AuthBanner />
       <CanvasTabs />
 
-      <div className="flex-1 relative">
+      <div data-tour="canvas-area" className="flex-1 relative">
         <ReactFlow
           nodes={activeCanvasNodes}
           edges={[]}
@@ -614,6 +615,8 @@ function AppContent() {
         existingSession={newSessionForNodeId ? sessions.get(newSessionForNodeId) : undefined}
         existingNodeId={newSessionForNodeId || undefined}
       />
+
+      {sessions.size === 0 && <OnboardingTour />}
     </div>
   );
 }

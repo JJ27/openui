@@ -89,6 +89,7 @@ export function Header() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
               className="flex items-center gap-3 px-3 py-1 rounded-full bg-surface text-xs"
+              data-tour="status-badges"
             >
               {/* Working agents */}
               <div className="flex items-center gap-1.5">
@@ -138,6 +139,7 @@ export function Header() {
           <Settings className="w-4 h-4" />
         </button>
         <motion.button
+          data-tour="new-agent"
           onClick={() => setAddAgentModalOpen(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white text-canvas text-sm font-medium hover:bg-zinc-100 transition-colors"
           whileHover={{ scale: 1.02 }}
