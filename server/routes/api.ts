@@ -145,6 +145,20 @@ apiRoutes.get("/sessions", (c) => {
   const sessionList = Array.from(sessions.entries())
     .filter(([, session]) => !session.archived)
     .map(([id, session]) => {
+      // Compute effective status: if stuck in waiting_input but user already approved
+      // a sleep command, flip to "waiting" (no hook events arrive during the sleep)
+      let effectiveStatus = session.status;
+      if (
+        session.status === "waiting_input" &&
+        session.sleepEndTime &&
+        session.needsInputSince &&
+        session.lastInputTime > session.needsInputSince
+      ) {
+        effectiveStatus = "waiting";
+        session.status = "waiting";
+        session.needsInputSince = undefined;
+      }
+
       return {
         sessionId: id,
         nodeId: session.nodeId,
@@ -154,7 +168,7 @@ apiRoutes.get("/sessions", (c) => {
         createdAt: session.createdAt,
         cwd: session.cwd,
         gitBranch: session.gitBranch,
-        status: session.status,
+        status: effectiveStatus,
         customName: session.customName,
         customColor: session.customColor,
         notes: session.notes,
@@ -719,13 +733,20 @@ apiRoutes.post("/status-update", async (c) => {
         session.currentTool = toolName;
         session.preToolTime = Date.now();
 
-        // Sleep detection: if Bash command starts with "sleep N", set waiting status + timer
-        session.sleepEndTime = undefined;
-        if (toolName === "Bash" && toolInput?.command) {
-          const sleepMatch = toolInput.command.match(/^sleep\s+(\d+)/);
-          if (sleepMatch) {
-            session.sleepEndTime = Date.now() + parseInt(sleepMatch[1], 10) * 1000;
-            effectiveStatus = "waiting";
+        // Sleep detection: if Bash command starts with "sleep N", set waiting status + timer.
+        // Only clear sleepEndTime for new Bash commands — parallel non-Bash tools (Read, Grep, etc.)
+        // should not disrupt an active sleep timer since they're separate tool invocations.
+        if (toolName === "Bash") {
+          if (toolInput?.command) {
+            const sleepMatch = toolInput.command.match(/^sleep\s+(\d+)/);
+            if (sleepMatch) {
+              session.sleepEndTime = Date.now() + parseInt(sleepMatch[1], 10) * 1000;
+              effectiveStatus = "waiting";
+            } else {
+              session.sleepEndTime = undefined;
+            }
+          } else {
+            session.sleepEndTime = undefined;
           }
         }
 
@@ -836,6 +857,10 @@ apiRoutes.post("/status-update", async (c) => {
     if (session.needsInputSince && effectiveStatus === "running") {
       if (session.lastInputTime > session.needsInputSince) {
         session.needsInputSince = undefined;  // User responded via terminal
+        // If a sleep is active, the user just approved the permission — go to "waiting" not "running"
+        if (session.sleepEndTime) {
+          effectiveStatus = "waiting";
+        }
       } else {
         effectiveStatus = "waiting_input";  // Still waiting, protect from override
       }
