@@ -19,7 +19,7 @@ export interface Agent {
   icon: string;
 }
 
-export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "waiting" | "tool_calling" | "idle" | "disconnected" | "error";
 
 export interface AgentSession {
   id: string;
@@ -45,6 +45,10 @@ export interface AgentSession {
   longRunningTool?: boolean;
   // Token usage from cost cache
   tokens?: number;
+  // Model name (from plugin hook, e.g. "claude-sonnet-4-6")
+  model?: string;
+  // Sleep timer: epoch ms when sleep ends
+  sleepEndTime?: number;
   // Archive status
   archived?: boolean;
 }

@@ -23,7 +23,7 @@ export function Header() {
 
     return {
       working: activeSessions.filter(s =>
-        s.status === "running" || s.status === "tool_calling"
+        s.status === "running" || s.status === "tool_calling" || s.status === "waiting"
       ).length,
       needsInput: activeSessions.filter(s =>
         s.status === "waiting_input"

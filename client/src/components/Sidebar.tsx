@@ -26,6 +26,7 @@ import { ForkDialog, type ForkDialogResult } from "./ForkDialog";
 
 const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   running: { label: "Running", color: "#22C55E" },
+  waiting: { label: "Waiting", color: "#6366F1" },
   waiting_input: { label: "Waiting for input", color: "#FBBF24" },
   tool_calling: { label: "Tool Calling", color: "#8B5CF6" },
   idle: { label: "Idle", color: "#6B7280" },

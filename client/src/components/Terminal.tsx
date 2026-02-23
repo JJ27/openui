@@ -135,6 +135,8 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               currentTool: msg.currentTool,
               ...(msg.gitBranch ? { gitBranch: msg.gitBranch } : {}),
               longRunningTool: msg.longRunningTool || false,
+              ...(msg.model ? { model: msg.model } : {}),
+              sleepEndTime: msg.sleepEndTime,
             });
           } else if (msg.type === "auth_required") {
             // OAuth detected during session start — show auth banner

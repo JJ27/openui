@@ -276,6 +276,12 @@ function AppContent() {
                 if (sessionData.tokens != null && existing.tokens !== sessionData.tokens) {
                   updates.tokens = sessionData.tokens;
                 }
+                if (sessionData.model && existing.model !== sessionData.model) {
+                  updates.model = sessionData.model;
+                }
+                if ((existing.sleepEndTime || undefined) !== (sessionData.sleepEndTime || undefined)) {
+                  updates.sleepEndTime = sessionData.sleepEndTime;
+                }
                 if (Object.keys(updates).length > 0) {
                   updateSession(sessionData.nodeId, updates);
                 }

@@ -163,7 +163,9 @@ apiRoutes.get("/sessions", (c) => {
         ticketTitle: session.ticketTitle,
         canvasId: session.canvasId, // Canvas/tab this agent belongs to
         longRunningTool: session.longRunningTool || false,
-        tokens: session.tokens ?? getTokensForSession(session.claudeSessionId),
+        tokens: getTokensForSession(session.claudeSessionId) ?? session.tokens,
+        model: session.model,
+        sleepEndTime: session.sleepEndTime,
       };
     });
   return c.json(sessionList);
@@ -636,7 +638,7 @@ apiRoutes.get("/sessions/:sessionId/context", (c) => {
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
   const body = await c.req.json();
-  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason } = body;
+  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason, model, toolInput } = body;
 
   // Log the full raw payload for debugging
   log(`\x1b[38;5;82m[plugin-hook]\x1b[0m ${hookEvent || 'unknown'}: status=${status} tool=${toolName || 'none'} openui=${openuiSessionId || 'none'}`);
@@ -678,6 +680,9 @@ apiRoutes.post("/status-update", async (c) => {
     const tokens = getTokensForSession(session.claudeSessionId);
     if (tokens != null) session.tokens = tokens;
 
+    // Store model name when reported
+    if (model) session.model = model;
+
     // Signal the start queue that this session has completed OAuth/initialization
     if (hookEvent === "SessionStart" && openuiSessionId) {
       signalSessionReady(openuiSessionId);
@@ -713,6 +718,16 @@ apiRoutes.post("/status-update", async (c) => {
         effectiveStatus = "running";
         session.currentTool = toolName;
         session.preToolTime = Date.now();
+
+        // Sleep detection: if Bash command starts with "sleep N", set waiting status + timer
+        session.sleepEndTime = undefined;
+        if (toolName === "Bash" && toolInput?.command) {
+          const sleepMatch = toolInput.command.match(/^sleep\s+(\d+)/);
+          if (sleepMatch) {
+            session.sleepEndTime = Date.now() + parseInt(sleepMatch[1], 10) * 1000;
+            effectiveStatus = "waiting";
+          }
+        }
 
         // Clear any existing permission timeout
         if (session.permissionTimeout) {
@@ -770,6 +785,7 @@ apiRoutes.post("/status-update", async (c) => {
         session.needsInputSince = undefined;
       }
       session.preToolTime = undefined;
+      session.sleepEndTime = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
@@ -790,6 +806,7 @@ apiRoutes.post("/status-update", async (c) => {
         session.needsInputSince = undefined;
       }
       session.preToolTime = undefined;
+      session.sleepEndTime = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
@@ -806,6 +823,12 @@ apiRoutes.post("/status-update", async (c) => {
     // PostToolUse for parallel calls should not override idle.
     if (session.status === "idle" && effectiveStatus === "running" && hookEvent !== "UserPromptSubmit") {
       effectiveStatus = "idle";
+    }
+
+    // Protect "waiting" (sleep) from being overridden by running events from subagents.
+    // Only post_tool (which clears sleepEndTime) or Stop should break out of waiting.
+    if (session.status === "waiting" && session.sleepEndTime && effectiveStatus === "running") {
+      effectiveStatus = "waiting";
     }
 
     // Protect waiting_input from being overwritten by running events from other subagents.
@@ -842,6 +865,8 @@ apiRoutes.post("/status-update", async (c) => {
       hookEvent: hookEvent,
       gitBranch: session.gitBranch,
       longRunningTool: session.longRunningTool || false,
+      model: session.model,
+      sleepEndTime: session.sleepEndTime,
     });
 
     return c.json({ success: true });
