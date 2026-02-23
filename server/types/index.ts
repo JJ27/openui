@@ -49,6 +49,7 @@ export interface Session {
   model?: string;
   // Sleep timer: epoch ms when sleep ends (for countdown display)
   sleepEndTime?: number;
+  sleepDuration?: number; // seconds, for recalculating sleepEndTime after permission approval
   // Long-running tool detection (server-side)
   longRunningTool?: boolean;
   longRunningTimeout?: ReturnType<typeof setTimeout>;

@@ -146,14 +146,18 @@ apiRoutes.get("/sessions", (c) => {
     .filter(([, session]) => !session.archived)
     .map(([id, session]) => {
       // Compute effective status: if stuck in waiting_input but user already approved
-      // a sleep command, flip to "waiting" (no hook events arrive during the sleep)
+      // a sleep command, flip to "waiting" (no hook events arrive during the sleep).
+      // Recalculate sleepEndTime from approval time since the sleep doesn't start
+      // until the user approves the permission prompt.
       let effectiveStatus = session.status;
       if (
         session.status === "waiting_input" &&
         session.sleepEndTime &&
+        session.sleepDuration &&
         session.needsInputSince &&
         session.lastInputTime > session.needsInputSince
       ) {
+        session.sleepEndTime = session.lastInputTime + session.sleepDuration * 1000;
         effectiveStatus = "waiting";
         session.status = "waiting";
         session.needsInputSince = undefined;
@@ -740,13 +744,17 @@ apiRoutes.post("/status-update", async (c) => {
           if (toolInput?.command) {
             const sleepMatch = toolInput.command.match(/^sleep\s+(\d+)/);
             if (sleepMatch) {
-              session.sleepEndTime = Date.now() + parseInt(sleepMatch[1], 10) * 1000;
+              const secs = parseInt(sleepMatch[1], 10);
+              session.sleepDuration = secs;
+              session.sleepEndTime = Date.now() + secs * 1000;
               effectiveStatus = "waiting";
             } else {
               session.sleepEndTime = undefined;
+              session.sleepDuration = undefined;
             }
           } else {
             session.sleepEndTime = undefined;
+            session.sleepDuration = undefined;
           }
         }
 
@@ -807,6 +815,7 @@ apiRoutes.post("/status-update", async (c) => {
       }
       session.preToolTime = undefined;
       session.sleepEndTime = undefined;
+      session.sleepDuration = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
@@ -828,6 +837,7 @@ apiRoutes.post("/status-update", async (c) => {
       }
       session.preToolTime = undefined;
       session.sleepEndTime = undefined;
+      session.sleepDuration = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
@@ -857,8 +867,10 @@ apiRoutes.post("/status-update", async (c) => {
     if (session.needsInputSince && effectiveStatus === "running") {
       if (session.lastInputTime > session.needsInputSince) {
         session.needsInputSince = undefined;  // User responded via terminal
-        // If a sleep is active, the user just approved the permission — go to "waiting" not "running"
-        if (session.sleepEndTime) {
+        // If a sleep is active, the user just approved the permission — go to "waiting" not "running".
+        // Recalculate sleepEndTime from approval time since sleep doesn't start until approved.
+        if (session.sleepEndTime && session.sleepDuration) {
+          session.sleepEndTime = session.lastInputTime + session.sleepDuration * 1000;
           effectiveStatus = "waiting";
         }
       } else {
