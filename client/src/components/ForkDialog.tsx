@@ -158,6 +158,17 @@ export function ForkDialog({
     setShowDirPicker(false);
   };
 
+  const isForkDisabled = !name.trim() || isForking;
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !isForkDisabled) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      e.preventDefault();
+      handleConfirm();
+    }
+  };
+
   const handleConfirm = () => {
     setIsForking(true);
     onConfirm({
@@ -195,7 +206,7 @@ export function ForkDialog({
             transition={{ duration: 0.15 }}
             className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
           >
-            <div className="pointer-events-auto w-full max-w-md mx-4">
+            <div className="pointer-events-auto w-full max-w-md mx-4" onKeyDown={handleKeyDown}>
               <div className="rounded-xl bg-surface border border-border shadow-2xl overflow-hidden">
                 {/* Header */}
                 <div className="px-5 py-3 border-b border-border flex items-center justify-between">
@@ -501,7 +512,7 @@ export function ForkDialog({
                   </button>
                   <button
                     onClick={handleConfirm}
-                    disabled={!name.trim() || isForking}
+                    disabled={isForkDisabled}
                     className="px-4 py-1.5 rounded-md text-sm font-medium text-canvas bg-white hover:bg-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
                   >
                     <GitFork className="w-3.5 h-3.5" />

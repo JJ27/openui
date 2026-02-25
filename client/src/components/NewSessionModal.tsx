@@ -396,6 +396,18 @@ export function NewSessionModal({
     onClose();
   };
 
+  const isCreateDisabled = !selectedAgent || isCreating || (!selectedAgent?.command && !commandArgs && activeTab !== "resume") || (activeTab === "github" && !selectedGithubIssue) || (activeTab === "resume" && !selectedConversation);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !isCreateDisabled) {
+      // Don't intercept Enter in the GitHub repo input or resume search input
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      e.preventDefault();
+      handleCreate();
+    }
+  };
+
   const handleCreate = async () => {
     if (!selectedAgent) return;
 
@@ -568,7 +580,7 @@ export function NewSessionModal({
             exit={{ opacity: 0, scale: 0.95 }}
             className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
           >
-            <div className="pointer-events-auto w-full max-w-lg mx-4">
+            <div className="pointer-events-auto w-full max-w-lg mx-4" onKeyDown={handleKeyDown}>
               <div className="rounded-xl bg-surface border border-border shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
                 {/* Header */}
                 <div className="px-5 py-4 border-b border-border flex items-center justify-between flex-shrink-0">
@@ -1270,7 +1282,7 @@ export function NewSessionModal({
                   </button>
                   <button
                     onClick={handleCreate}
-                    disabled={!selectedAgent || isCreating || (!selectedAgent?.command && !commandArgs && activeTab !== "resume") || (activeTab === "github" && !selectedGithubIssue) || (activeTab === "resume" && !selectedConversation)}
+                    disabled={isCreateDisabled}
                     className="px-4 py-1.5 rounded-md text-sm font-medium text-canvas bg-white hover:bg-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {isCreating
