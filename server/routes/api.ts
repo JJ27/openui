@@ -826,6 +826,35 @@ apiRoutes.post("/status-update", async (c) => {
         session.longRunningTimeout = undefined;
       }
       // Keep currentTool to show what just ran
+    } else if (status === "compacting") {
+      // PreCompact hook — agent is compacting its conversation context.
+      // Show a calm "Compacting" status. Don't clear tool tracking.
+      effectiveStatus = "compacting";
+      session.preToolTime = undefined;
+      if (session.permissionTimeout) {
+        clearTimeout(session.permissionTimeout);
+        session.permissionTimeout = undefined;
+      }
+      // Compaction timeout: if no new events arrive within 60s, revert to idle.
+      // This handles the case where compaction was triggered while idle (e.g. /compact).
+      // If the agent continues working, the next PreToolUse/UserPromptSubmit clears this.
+      if (session.compactingTimeout) clearTimeout(session.compactingTimeout);
+      session.compactingTimeout = setTimeout(() => {
+        if (session.status === "compacting") {
+          session.status = "idle";
+          broadcastToSession(session, {
+            type: "status",
+            status: "idle",
+            isRestored: session.isRestored,
+            currentTool: session.currentTool,
+            hookEvent: "compacting_timeout",
+            gitBranch: session.gitBranch,
+            longRunningTool: false,
+            model: session.model,
+            sleepEndTime: undefined,
+          });
+        }
+      }, 60_000);
     } else {
       // For other statuses, clear tool tracking if not actively using tools
       if (status !== "tool_calling" && status !== "running") {
@@ -847,6 +876,12 @@ apiRoutes.post("/status-update", async (c) => {
         clearTimeout(session.longRunningTimeout);
         session.longRunningTimeout = undefined;
       }
+    }
+
+    // Clear compacting timeout when any non-compacting event arrives
+    if (status !== "compacting" && session.compactingTimeout) {
+      clearTimeout(session.compactingTimeout);
+      session.compactingTimeout = undefined;
     }
 
     // Once Stop fires (idle), only a new user message (UserPromptSubmit) should
@@ -1131,7 +1166,13 @@ function saveConfig(config: Record<string, any>) {
 
 // GET /api/settings — read all user settings
 apiRoutes.get("/settings", (c) => {
-  return c.json(loadConfig());
+  const config = loadConfig();
+  // Auto-set firstSeenAt for new users so they don't see a backlog of "What's New" entries
+  if (!config.firstSeenAt) {
+    config.firstSeenAt = new Date().toISOString().slice(0, 10); // "2026-02-25"
+    saveConfig(config);
+  }
+  return c.json(config);
 });
 
 // PUT /api/settings — merge user settings

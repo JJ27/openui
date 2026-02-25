@@ -180,6 +180,37 @@ function AppContent() {
         return;
       }
 
+      // Cmd/Ctrl + I: Jump to next agent needing input
+      if (isMod && e.key === "i" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const needsInputIds = agentNodeIds.filter((id) => {
+          const s = useStore.getState().sessions.get(id);
+          return s?.status === "waiting_input";
+        });
+        if (needsInputIds.length > 0) {
+          // Rotate: find current index and go to next
+          const currentIdx = selectedNodeId ? needsInputIds.indexOf(selectedNodeId) : -1;
+          const nextIdx = currentIdx >= needsInputIds.length - 1 ? 0 : currentIdx + 1;
+          setSelectedNodeId(needsInputIds[nextIdx]);
+          setSidebarOpen(true);
+        }
+        return;
+      }
+
+      // Cmd/Ctrl + N: New agent
+      if (isMod && e.key === "n" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setAddAgentModalOpen(true);
+        return;
+      }
+
+      // ? key: Open help panel
+      if (e.key === "?" && !isMod) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("openui:toggle-help"));
+        return;
+      }
+
       // Escape to close sidebar
       if (e.key === "Escape" && sidebarOpen) {
         e.preventDefault();

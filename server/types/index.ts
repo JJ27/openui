@@ -2,7 +2,7 @@ import type { IPty } from "bun-pty";
 import type { ServerWebSocket } from "bun";
 import type { Canvas } from "./canvas";
 
-export type AgentStatus = "running" | "waiting_input" | "waiting" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "waiting" | "compacting" | "tool_calling" | "idle" | "disconnected" | "error";
 
 export interface Session {
   pty: IPty | null;
@@ -50,6 +50,8 @@ export interface Session {
   // Sleep timer: epoch ms when sleep ends (for countdown display)
   sleepEndTime?: number;
   sleepDuration?: number; // seconds, for recalculating sleepEndTime after permission approval
+  // Compaction timeout: reverts to idle if no events arrive after compaction
+  compactingTimeout?: ReturnType<typeof setTimeout>;
   // Long-running tool detection (server-side)
   longRunningTool?: boolean;
   longRunningTimeout?: ReturnType<typeof setTimeout>;

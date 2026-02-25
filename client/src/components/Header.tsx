@@ -1,20 +1,78 @@
-import { useState, useMemo, useEffect } from "react";
-import { Plus, Folder, Settings, Archive, Loader2, Search } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { Plus, Folder, Settings, Archive, Loader2, Search, HelpCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "../stores/useStore";
 import { SettingsModal } from "./SettingsModal";
 import { ConversationSearchModal } from "./ConversationSearchModal";
+import { HelpModal } from "./HelpModal";
+import { changelog, type ChangelogEntry } from "../data/changelog";
+
+const MAX_DISPLAY = 10;
 
 export function Header() {
   const { setAddAgentModalOpen, sessions, launchCwd, showArchived, setShowArchived, autoResumeProgress } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  // "What's New" state
+  const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
+  const [firstSeenAt, setFirstSeenAt] = useState<string | null>(null);
+
+  // Fetch seen state from server on mount
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((res) => res.json())
+      .then((config) => {
+        setSeenIds(new Set(config.seenUpdateIds || []));
+        setFirstSeenAt(config.firstSeenAt || null);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Compute unseen / older updates (capped to MAX_DISPLAY total)
+  const { unseenUpdates, olderUpdates } = useMemo(() => {
+    // Filter to entries the user should see (only those after their first visit)
+    const visible = firstSeenAt
+      ? changelog.filter((e) => e.date >= firstSeenAt)
+      : [];
+    const capped = visible.slice(0, MAX_DISPLAY);
+    const unseen: ChangelogEntry[] = [];
+    const older: ChangelogEntry[] = [];
+    for (const entry of capped) {
+      if (seenIds.has(entry.id)) {
+        older.push(entry);
+      } else {
+        unseen.push(entry);
+      }
+    }
+    return { unseenUpdates: unseen, olderUpdates: older };
+  }, [seenIds, firstSeenAt]);
+
+  const markAsSeen = useCallback(() => {
+    // Mark all visible entries as seen
+    const allIds = changelog.slice(0, MAX_DISPLAY).map((e) => e.id);
+    const merged = new Set([...seenIds, ...allIds]);
+    setSeenIds(merged);
+    fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seenUpdateIds: [...merged] }),
+    }).catch(() => {});
+  }, [seenIds]);
 
   // Listen for Cmd+K toggle event from App.tsx keyboard handler
   useEffect(() => {
     const handler = () => setSearchOpen((prev) => !prev);
     window.addEventListener("openui:toggle-search", handler);
     return () => window.removeEventListener("openui:toggle-search", handler);
+  }, []);
+
+  // Listen for help toggle event from App.tsx keyboard handler
+  useEffect(() => {
+    const handler = () => setHelpOpen((prev) => !prev);
+    window.addEventListener("openui:toggle-help", handler);
+    return () => window.removeEventListener("openui:toggle-help", handler);
   }, []);
 
   // Count active (non-archived) sessions by status
@@ -124,6 +182,16 @@ export function Header() {
       {/* Right side buttons */}
       <div className="flex items-center gap-2">
         <button
+          onClick={() => setHelpOpen(true)}
+          className="relative p-2 rounded-md text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
+          title="Help & Shortcuts (?)"
+        >
+          <HelpCircle className="w-4 h-4" />
+          {unseenUpdates.length > 0 && (
+            <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-500" />
+          )}
+        </button>
+        <button
           onClick={() => setSearchOpen(true)}
           className="p-2 rounded-md text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
           title="Search Conversations (Cmd+K)"
@@ -160,6 +228,23 @@ export function Header() {
         </motion.button>
       </div>
 
+      <HelpModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        unseenUpdates={unseenUpdates}
+        olderUpdates={olderUpdates}
+        onMarkAsSeen={markAsSeen}
+        onRestartTour={() => {
+          // Reset tour completion in server config, then reload
+          fetch("/api/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tourCompleted: false }),
+          })
+            .then(() => window.location.reload())
+            .catch(() => {});
+        }}
+      />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ConversationSearchModal
         open={searchOpen}

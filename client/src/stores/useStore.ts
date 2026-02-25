@@ -19,7 +19,7 @@ export interface Agent {
   icon: string;
 }
 
-export type AgentStatus = "running" | "waiting_input" | "waiting" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "waiting" | "compacting" | "tool_calling" | "idle" | "disconnected" | "error";
 
 export interface AgentSession {
   id: string;

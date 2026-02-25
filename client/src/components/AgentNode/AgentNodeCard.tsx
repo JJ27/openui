@@ -7,6 +7,7 @@ const statusConfig: Record<AgentStatus, { label: string; color: string; isActive
   running: { label: "Working", color: "#22C55E", isActive: true },
   tool_calling: { label: "Working", color: "#22C55E", isActive: true },
   waiting: { label: "Waiting", color: "#6366F1" },
+  compacting: { label: "Compacting", color: "#06B6D4" },
   waiting_input: { label: "Needs Input", color: "#F97316", needsAttention: true },
   idle: { label: "Idle", color: "#FBBF24", needsAttention: true },
   disconnected: { label: "Offline", color: "#6B7280" },
@@ -99,6 +100,8 @@ export function AgentNodeCard({
   const isToolCalling = status === "tool_calling";
   const needsAttention = statusInfo.needsAttention;
   const isWaiting = status === "waiting";
+  const isCompacting = status === "compacting";
+  const isCalm = isWaiting || isCompacting; // Calm states: subtle border, no glow
 
   // When cwd is a worktree root like .../universe/.isaac/worktree_pool/worktree-02,
   // the last segment "worktree-02" is meaningless — show the repo name instead.
@@ -137,12 +140,12 @@ export function AgentNodeCard({
         backgroundColor: "#1a1a1a",
         border: needsAttention
           ? `2px solid ${statusInfo.color}`
-          : isActive || isWaiting
+          : isActive || isCalm
           ? `1px solid ${statusInfo.color}40`
           : "1px solid #2a2a2a",
         boxShadow: needsAttention
           ? `0 0 16px ${statusInfo.color}40, 0 0 32px ${statusInfo.color}20, 0 4px 12px rgba(0, 0, 0, 0.4)`
-          : isActive || isWaiting
+          : isActive || isCalm
           ? `0 0 12px ${statusInfo.color}15, 0 4px 12px rgba(0, 0, 0, 0.4)`
           : selected
           ? "0 8px 24px rgba(0, 0, 0, 0.6)"
