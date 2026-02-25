@@ -42,7 +42,7 @@ interface TourStep {
   target: string;
   title: string;
   message: string;
-  placement: "bottom" | "top";
+  placement: "bottom" | "top" | "center";
 }
 
 const STEPS: TourStep[] = [
@@ -65,24 +65,25 @@ const STEPS: TourStep[] = [
     title: "Workspaces",
     message:
       "Organize agents into canvases \u2014 one per project, feature, or team.",
-    placement: "bottom",
+    placement: "top",
   },
   {
     target: "canvas-area",
     title: "Your Canvas",
     message:
       "Agents appear as cards. Click to open the terminal. Right-click to fork or delete.",
-    placement: "top",
+    placement: "center",
   },
 ];
 
 // --- Tooltip positioning ---
 function getTooltipStyle(
   rect: DOMRect,
-  placement: "bottom" | "top"
+  placement: "bottom" | "top" | "center"
 ): React.CSSProperties {
   const pad = 12;
   const tooltipWidth = 296;
+  const tooltipHeight = 160; // approximate
 
   // Center tooltip horizontally on the target
   let left = rect.left + rect.width / 2 - tooltipWidth / 2;
@@ -92,8 +93,14 @@ function getTooltipStyle(
   if (placement === "bottom") {
     return { position: "fixed", top: rect.bottom + pad, left, width: tooltipWidth };
   }
-  // "top" — place above the canvas area, roughly mid-screen
-  return { position: "fixed", bottom: window.innerHeight - rect.top + pad, left, width: tooltipWidth };
+  if (placement === "top") {
+    // Place above the target, clamped so it doesn't go off-screen
+    const top = Math.max(16, rect.top - pad - tooltipHeight);
+    return { position: "fixed", top, left, width: tooltipWidth };
+  }
+  // "center" — centered within the target area
+  const top = rect.top + rect.height / 2 - tooltipHeight / 2;
+  return { position: "fixed", top, left, width: tooltipWidth };
 }
 
 type Phase = "welcome" | "tour";
@@ -115,10 +122,14 @@ export function OnboardingTour() {
       .catch(() => {});
   }, []);
 
-  // Measure target element for current step
-  const measureTarget = useCallback((target: string) => {
+  // Measure target element for current step; returns true if found
+  const measureTarget = useCallback((target: string): boolean => {
     const el = document.querySelector(`[data-tour="${target}"]`);
-    if (el) setTargetRect(el.getBoundingClientRect());
+    if (el) {
+      setTargetRect(el.getBoundingClientRect());
+      return true;
+    }
+    return false;
   }, []);
 
   // Re-measure on resize during tour phase
@@ -129,19 +140,29 @@ export function OnboardingTour() {
     return () => window.removeEventListener("resize", handler);
   }, [phase, step, measureTarget]);
 
+  // Find the next step whose target element exists in the DOM
+  const findNextVisible = (from: number): number => {
+    for (let i = from; i < STEPS.length; i++) {
+      if (document.querySelector(`[data-tour="${STEPS[i].target}"]`)) return i;
+    }
+    return -1; // no visible steps remaining
+  };
+
   const startTour = () => {
     setPhase("tour");
-    setStep(0);
-    measureTarget(STEPS[0].target);
+    const first = findNextVisible(0);
+    if (first === -1) { complete(); return; }
+    setStep(first);
+    measureTarget(STEPS[first].target);
   };
 
   const nextStep = () => {
-    if (step < STEPS.length - 1) {
-      const next = step + 1;
+    const next = findNextVisible(step + 1);
+    if (next === -1) {
+      complete();
+    } else {
       setStep(next);
       measureTarget(STEPS[next].target);
-    } else {
-      complete();
     }
   };
 
