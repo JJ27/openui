@@ -23,7 +23,10 @@ export function Header() {
 
     return {
       working: activeSessions.filter(s =>
-        s.status === "running" || s.status === "tool_calling" || s.status === "waiting"
+        s.status === "running" || s.status === "tool_calling"
+      ).length,
+      waiting: activeSessions.filter(s =>
+        s.status === "waiting"
       ).length,
       needsInput: activeSessions.filter(s =>
         s.status === "waiting_input"
@@ -96,6 +99,13 @@ export function Header() {
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
                 <span className="text-zinc-400">{statusCounts.working}</span>
               </div>
+              {/* Waiting agents (only shown when > 0) */}
+              {statusCounts.waiting > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                  <span className="text-zinc-400">{statusCounts.waiting}</span>
+                </div>
+              )}
               {/* Needs input agents */}
               <div className="flex items-center gap-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
