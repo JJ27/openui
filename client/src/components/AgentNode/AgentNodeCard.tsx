@@ -100,8 +100,14 @@ export function AgentNodeCard({
   const needsAttention = statusInfo.needsAttention;
   const isWaiting = status === "waiting";
 
-  const displayCwd = cwd;
-  const dirName = displayCwd ? displayCwd.split("/").pop() || displayCwd : null;
+  // When cwd is a worktree root like .../universe/.isaac/worktree_pool/worktree-02,
+  // the last segment "worktree-02" is meaningless — show the repo name instead.
+  // If the agent cd's into a subdir, the last segment is already useful as-is.
+  const dirName = cwd
+    ? (cwd.match(/\/([^/]+)\/\.isaac\/worktree_pool\/worktree-\d+$/)?.[1]
+      || cwd.split("/").pop()
+      || cwd)
+    : null;
 
   // Get display name for current tool
   const toolDisplay = currentTool ? (toolDisplayNames[currentTool] || currentTool) : null;
