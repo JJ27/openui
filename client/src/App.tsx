@@ -78,7 +78,12 @@ function AppContent() {
   useEffect(() => {
     fetch("/api/config")
       .then((res) => res.json())
-      .then((config) => setLaunchCwd(config.launchCwd))
+      .then((config) => {
+        const cwd = config.homeDir && config.launchCwd?.startsWith(config.homeDir)
+          ? "~" + config.launchCwd.slice(config.homeDir.length)
+          : config.launchCwd;
+        setLaunchCwd(cwd);
+      })
       .catch(console.error);
 
     fetch("/api/agents")

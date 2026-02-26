@@ -17,7 +17,7 @@ const logError = QUIET ? () => {} : console.error.bind(console);
 export const apiRoutes = new Hono();
 
 apiRoutes.get("/config", (c) => {
-  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir() });
+  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir(), homeDir: homedir() });
 });
 
 // Get auto-resume configuration and status
