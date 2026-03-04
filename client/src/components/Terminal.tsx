@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { useStore, AgentStatus } from "../stores/useStore";
 
@@ -65,7 +66,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
         brightWhite: "#ffffff",
       },
       allowProposedApi: true,
-      scrollback: 10000,
+      scrollback: 7500,
     });
 
     const fitAddon = new FitAddon();
@@ -74,6 +75,13 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     term.loadAddon(webLinksAddon);
 
     term.open(terminalRef.current);
+
+    // GPU-accelerated rendering for better performance on long sessions
+    try {
+      term.loadAddon(new WebglAddon());
+    } catch {
+      // WebGL not available — falls back to default canvas renderer
+    }
 
     // Reset all terminal attributes before receiving buffered content
     term.write("\x1b[0m\x1b[?25h");
@@ -125,7 +133,15 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
                 if (mountedRef.current) term.scrollToBottom();
               }, 50);
             } else {
-              term.write(msg.data);
+              // Preserve scroll position: if user was at bottom, stay at bottom
+              // after xterm processes the data (which may include cursor-movement
+              // sequences that displace the viewport).
+              const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+              term.write(msg.data, () => {
+                if (wasAtBottom && mountedRef.current) {
+                  term.scrollToBottom();
+                }
+              });
             }
           } else if (msg.type === "status") {
             // Handle status updates from plugin hooks
