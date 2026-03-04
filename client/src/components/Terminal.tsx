@@ -168,19 +168,28 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
       }
     });
 
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        if (fitAddonRef.current) {
-          fitAddonRef.current.fit();
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (!fitAddonRef.current || !xtermRef.current) return;
+
+        const t = xtermRef.current;
+        // Remember if user was scrolled to bottom
+        const wasAtBottom = t.buffer.active.viewportY >= t.buffer.active.baseY;
+
+        fitAddonRef.current.fit();
+
+        // Restore scroll position after fit to prevent viewport jumping
+        if (wasAtBottom) {
+          t.scrollToBottom();
         }
-        if (ws?.readyState === WebSocket.OPEN && xtermRef.current) {
-          ws.send(JSON.stringify({
-            type: "resize",
-            cols: xtermRef.current.cols,
-            rows: xtermRef.current.rows
-          }));
+
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", cols: t.cols, rows: t.rows }));
         }
-      });
+      }, 150);
     });
 
     resizeObserver.observe(terminalRef.current);
@@ -188,6 +197,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     return () => {
       mountedRef.current = false;
       clearTimeout(connectTimeout);
+      if (resizeTimeout) clearTimeout(resizeTimeout);
       resizeObserver.disconnect();
       ws?.close();
       term.dispose();
