@@ -74,6 +74,9 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           ticketId={session?.ticketId}
           ticketTitle={session?.ticketTitle}
           longRunningTool={longRunningTool}
+          tokens={session?.tokens}
+          model={session?.model}
+          sleepEndTime={session?.sleepEndTime}
         />
       </motion.div>
 

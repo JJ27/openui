@@ -3,6 +3,7 @@ import type { Agent } from "../types";
 import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
+import { getTokensForSession } from "../services/costCache";
 import { spawnSync } from "bun";
 import { join } from "path";
 import { homedir } from "os";
@@ -16,7 +17,7 @@ const logError = QUIET ? () => {} : console.error.bind(console);
 export const apiRoutes = new Hono();
 
 apiRoutes.get("/config", (c) => {
-  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir() });
+  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir(), homeDir: homedir() });
 });
 
 // Get auto-resume configuration and status
@@ -144,6 +145,24 @@ apiRoutes.get("/sessions", (c) => {
   const sessionList = Array.from(sessions.entries())
     .filter(([, session]) => !session.archived)
     .map(([id, session]) => {
+      // Compute effective status: if stuck in waiting_input but user already approved
+      // a sleep command, flip to "waiting" (no hook events arrive during the sleep).
+      // Recalculate sleepEndTime from approval time since the sleep doesn't start
+      // until the user approves the permission prompt.
+      let effectiveStatus = session.status;
+      if (
+        session.status === "waiting_input" &&
+        session.sleepEndTime &&
+        session.sleepDuration &&
+        session.needsInputSince &&
+        session.lastInputTime > session.needsInputSince
+      ) {
+        session.sleepEndTime = session.lastInputTime + session.sleepDuration * 1000;
+        effectiveStatus = "waiting";
+        session.status = "waiting";
+        session.needsInputSince = undefined;
+      }
+
       return {
         sessionId: id,
         nodeId: session.nodeId,
@@ -153,7 +172,7 @@ apiRoutes.get("/sessions", (c) => {
         createdAt: session.createdAt,
         cwd: session.cwd,
         gitBranch: session.gitBranch,
-        status: session.status,
+        status: effectiveStatus,
         customName: session.customName,
         customColor: session.customColor,
         notes: session.notes,
@@ -162,6 +181,9 @@ apiRoutes.get("/sessions", (c) => {
         ticketTitle: session.ticketTitle,
         canvasId: session.canvasId, // Canvas/tab this agent belongs to
         longRunningTool: session.longRunningTool || false,
+        tokens: getTokensForSession(session.claudeSessionId) ?? session.tokens,
+        model: session.model,
+        sleepEndTime: session.sleepEndTime,
       };
     });
   return c.json(sessionList);
@@ -363,12 +385,14 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     // Build the command with resume flag if we have a Claude session ID
     let finalCommand = injectPluginDir(session.command, session.agentId);
 
-    // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
+    // For Claude sessions, use --resume to restore the specific session.
+    // If the command already has --resume, that's the canonical ID — use it as-is.
+    // Only inject from claudeSessionId when there's no --resume yet (first resume).
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
-      // Remove any existing --resume flags first
-      finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
-
+    const existingResume = session.command.match(/--resume\s+([\w-]+)/);
+    if (existingResume) {
+      log(`\x1b[38;5;141m[session]\x1b[0m Using existing --resume ${existingResume[1]} from command`);
+    } else if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
       const resumeArg = `--resume ${session.claudeSessionId}`;
       if (finalCommand.includes("isaac claude")) {
         finalCommand = finalCommand.replace("isaac claude", `isaac claude ${resumeArg}`);
@@ -377,7 +401,9 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       } else if (finalCommand.startsWith("claude")) {
         finalCommand = finalCommand.replace(/^claude(\s|$)/, `claude ${resumeArg}$1`);
       }
-      log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId}`);
+      // Persist --resume into the command so future restarts use the correct ID
+      session.command = session.command.replace(/^(isaac claude|llm agent claude|claude)/, `$1 ${resumeArg}`);
+      log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId} (persisted to command)`);
     }
 
     setTimeout(() => {
@@ -614,10 +640,27 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
   return c.json({ success: true });
 });
 
+// Session context endpoint for plugin hook systemMessage injection
+apiRoutes.get("/sessions/:sessionId/context", (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  return c.json({
+    customName: session.customName || null,
+    notes: session.notes || null,
+    ticketId: session.ticketId || null,
+    ticketTitle: session.ticketTitle || null,
+    ticketUrl: session.ticketUrl || null,
+  });
+});
+
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
   const body = await c.req.json();
-  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason } = body;
+  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason, model, toolInput } = body;
 
   // Log the full raw payload for debugging
   log(`\x1b[38;5;82m[plugin-hook]\x1b[0m ${hookEvent || 'unknown'}: status=${status} tool=${toolName || 'none'} openui=${openuiSessionId || 'none'}`);
@@ -645,8 +688,8 @@ apiRoutes.post("/status-update", async (c) => {
   }
 
   if (session) {
-    // Store Claude session ID mapping if we have it
-    if (claudeSessionId && !session.claudeSessionId) {
+    // Always update Claude session ID — Claude may issue a new ID on resume
+    if (claudeSessionId) {
       session.claudeSessionId = claudeSessionId;
     }
 
@@ -654,6 +697,13 @@ apiRoutes.post("/status-update", async (c) => {
     if (cwd && cwd !== session.cwd) {
       session.cwd = cwd;
     }
+
+    // Refresh token count from cost cache
+    const tokens = getTokensForSession(session.claudeSessionId);
+    if (tokens != null) session.tokens = tokens;
+
+    // Store model name when reported
+    if (model) session.model = model;
 
     // Signal the start queue that this session has completed OAuth/initialization
     if (hookEvent === "SessionStart" && openuiSessionId) {
@@ -690,6 +740,27 @@ apiRoutes.post("/status-update", async (c) => {
         effectiveStatus = "running";
         session.currentTool = toolName;
         session.preToolTime = Date.now();
+
+        // Sleep detection: if Bash command starts with "sleep N", set waiting status + timer.
+        // Only clear sleepEndTime for new Bash commands — parallel non-Bash tools (Read, Grep, etc.)
+        // should not disrupt an active sleep timer since they're separate tool invocations.
+        if (toolName === "Bash") {
+          if (toolInput?.command) {
+            const sleepMatch = toolInput.command.match(/^sleep\s+(\d+)/);
+            if (sleepMatch) {
+              const secs = parseInt(sleepMatch[1], 10);
+              session.sleepDuration = secs;
+              session.sleepEndTime = Date.now() + secs * 1000;
+              effectiveStatus = "waiting";
+            } else {
+              session.sleepEndTime = undefined;
+              session.sleepDuration = undefined;
+            }
+          } else {
+            session.sleepEndTime = undefined;
+            session.sleepDuration = undefined;
+          }
+        }
 
         // Clear any existing permission timeout
         if (session.permissionTimeout) {
@@ -747,6 +818,8 @@ apiRoutes.post("/status-update", async (c) => {
         session.needsInputSince = undefined;
       }
       session.preToolTime = undefined;
+      session.sleepEndTime = undefined;
+      session.sleepDuration = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
@@ -757,6 +830,35 @@ apiRoutes.post("/status-update", async (c) => {
         session.longRunningTimeout = undefined;
       }
       // Keep currentTool to show what just ran
+    } else if (status === "compacting") {
+      // PreCompact hook — agent is compacting its conversation context.
+      // Show a calm "Compacting" status. Don't clear tool tracking.
+      effectiveStatus = "compacting";
+      session.preToolTime = undefined;
+      if (session.permissionTimeout) {
+        clearTimeout(session.permissionTimeout);
+        session.permissionTimeout = undefined;
+      }
+      // Compaction timeout: if no new events arrive within 60s, revert to idle.
+      // This handles the case where compaction was triggered while idle (e.g. /compact).
+      // If the agent continues working, the next PreToolUse/UserPromptSubmit clears this.
+      if (session.compactingTimeout) clearTimeout(session.compactingTimeout);
+      session.compactingTimeout = setTimeout(() => {
+        if (session.status === "compacting") {
+          session.status = "idle";
+          broadcastToSession(session, {
+            type: "status",
+            status: "idle",
+            isRestored: session.isRestored,
+            currentTool: session.currentTool,
+            hookEvent: "compacting_timeout",
+            gitBranch: session.gitBranch,
+            longRunningTool: false,
+            model: session.model,
+            sleepEndTime: undefined,
+          });
+        }
+      }, 60_000);
     } else {
       // For other statuses, clear tool tracking if not actively using tools
       if (status !== "tool_calling" && status !== "running") {
@@ -767,6 +869,8 @@ apiRoutes.post("/status-update", async (c) => {
         session.needsInputSince = undefined;
       }
       session.preToolTime = undefined;
+      session.sleepEndTime = undefined;
+      session.sleepDuration = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
         session.permissionTimeout = undefined;
@@ -778,6 +882,12 @@ apiRoutes.post("/status-update", async (c) => {
       }
     }
 
+    // Clear compacting timeout when any non-compacting event arrives
+    if (status !== "compacting" && session.compactingTimeout) {
+      clearTimeout(session.compactingTimeout);
+      session.compactingTimeout = undefined;
+    }
+
     // Once Stop fires (idle), only a new user message (UserPromptSubmit) should
     // flip status back to running. Late events like SubagentStop or missing
     // PostToolUse for parallel calls should not override idle.
@@ -785,11 +895,23 @@ apiRoutes.post("/status-update", async (c) => {
       effectiveStatus = "idle";
     }
 
+    // Protect "waiting" (sleep) from being overridden by running events from subagents.
+    // Only post_tool (which clears sleepEndTime) or Stop should break out of waiting.
+    if (session.status === "waiting" && session.sleepEndTime && effectiveStatus === "running") {
+      effectiveStatus = "waiting";
+    }
+
     // Protect waiting_input from being overwritten by running events from other subagents.
     // Clear when user provides terminal input (e.g., approving a permission prompt).
     if (session.needsInputSince && effectiveStatus === "running") {
       if (session.lastInputTime > session.needsInputSince) {
         session.needsInputSince = undefined;  // User responded via terminal
+        // If a sleep is active, the user just approved the permission — go to "waiting" not "running".
+        // Recalculate sleepEndTime from approval time since sleep doesn't start until approved.
+        if (session.sleepEndTime && session.sleepDuration) {
+          session.sleepEndTime = session.lastInputTime + session.sleepDuration * 1000;
+          effectiveStatus = "waiting";
+        }
       } else {
         effectiveStatus = "waiting_input";  // Still waiting, protect from override
       }
@@ -819,6 +941,8 @@ apiRoutes.post("/status-update", async (c) => {
       hookEvent: hookEvent,
       gitBranch: session.gitBranch,
       longRunningTool: session.longRunningTool || false,
+      model: session.model,
+      sleepEndTime: session.sleepEndTime,
     });
 
     return c.json({ success: true });
@@ -1046,7 +1170,13 @@ function saveConfig(config: Record<string, any>) {
 
 // GET /api/settings — read all user settings
 apiRoutes.get("/settings", (c) => {
-  return c.json(loadConfig());
+  const config = loadConfig();
+  // Auto-set firstSeenAt for new users so they don't see a backlog of "What's New" entries
+  if (!config.firstSeenAt) {
+    config.firstSeenAt = new Date().toISOString().slice(0, 10); // "2026-02-25"
+    saveConfig(config);
+  }
+  return c.json(config);
 });
 
 // PUT /api/settings — merge user settings

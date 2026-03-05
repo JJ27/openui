@@ -143,5 +143,39 @@ if [ -n "$STATUS" ]; then
   echo "[$(date)] Response: $RESPONSE" >> "$DEBUG_LOG" 2>/dev/null || true
 fi
 
+# For SessionStart, inject system message with session context
+if [ "$HOOK_EVENT" = "SessionStart" ] && [ -n "$OPENUI_SID" ] && command -v jq &> /dev/null; then
+  CONTEXT=$(curl -s "http://${OPENUI_HOST}:${OPENUI_PORT}/api/sessions/${OPENUI_SID}/context" --max-time 2 2>/dev/null) || true
+
+  if [ -n "$CONTEXT" ] && [ "$CONTEXT" != "null" ]; then
+    TICKET_URL=$(echo "$CONTEXT" | jq -r '.ticketUrl // empty' 2>/dev/null || echo "")
+    TICKET_ID=$(echo "$CONTEXT" | jq -r '.ticketId // empty' 2>/dev/null || echo "")
+    TICKET_TITLE=$(echo "$CONTEXT" | jq -r '.ticketTitle // empty' 2>/dev/null || echo "")
+    NOTES=$(echo "$CONTEXT" | jq -r '.notes // empty' 2>/dev/null || echo "")
+    CUSTOM_NAME=$(echo "$CONTEXT" | jq -r '.customName // empty' 2>/dev/null || echo "")
+
+    MSG=""
+    if [ -n "$CUSTOM_NAME" ]; then
+      MSG="Your agent name in the team is \"${CUSTOM_NAME}\"."
+    fi
+    if [ -n "$TICKET_ID" ] && [ -n "$TICKET_URL" ]; then
+      MSG="${MSG} You are working on ticket ${TICKET_ID}"
+      if [ -n "$TICKET_TITLE" ]; then
+        MSG="${MSG}: ${TICKET_TITLE}"
+      fi
+      MSG="${MSG}. Ticket URL: ${TICKET_URL}. Please fetch or read this URL for full ticket details before starting work."
+    fi
+    if [ -n "$NOTES" ]; then
+      MSG="${MSG} Additional context from the user: ${NOTES}"
+    fi
+
+    if [ -n "$MSG" ]; then
+      # Output JSON to stdout for Claude Code to consume as a system message
+      echo "{\"systemMessage\": $(echo "$MSG" | jq -Rs .)}"
+      echo "[$(date)] SystemMessage injected: $MSG" >> "$DEBUG_LOG" 2>/dev/null || true
+    fi
+  fi
+fi
+
 # Always exit successfully so we don't block Claude
 exit 0

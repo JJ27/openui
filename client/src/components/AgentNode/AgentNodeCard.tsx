@@ -1,15 +1,49 @@
-import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock } from "lucide-react";
+import { useState, useEffect } from "react";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock, Zap } from "lucide-react";
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
 const statusConfig: Record<AgentStatus, { label: string; color: string; isActive?: boolean; needsAttention?: boolean }> = {
   running: { label: "Working", color: "#22C55E", isActive: true },
   tool_calling: { label: "Working", color: "#22C55E", isActive: true },
+  waiting: { label: "Waiting", color: "#6366F1" },
+  compacting: { label: "Compacting", color: "#06B6D4" },
   waiting_input: { label: "Needs Input", color: "#F97316", needsAttention: true },
   idle: { label: "Idle", color: "#FBBF24", needsAttention: true },
   disconnected: { label: "Offline", color: "#6B7280" },
   error: { label: "Error", color: "#EF4444", needsAttention: true },
 };
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tokens`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K tokens`;
+  return `${n} tokens`;
+}
+
+function formatModelName(model: string): string {
+  // Extract context window suffix like [1m], [200k] etc.
+  const ctxMatch = model.match(/\[(\d+[mk])\]/i);
+  const ctxSuffix = ctxMatch ? ` (${ctxMatch[1].toUpperCase()})` : "";
+  const base = model.replace(/\[.*\]/, "");
+
+  // "claude-sonnet-4-6" → "Sonnet 4.6"
+  // "claude-opus-4-6[1m]" → "Opus 4.6 (1M)"
+  // "claude-haiku-4-5-20251001" → "Haiku 4.5"
+  const m = base.match(/claude-(\w+)-(\d+)-(\d+)/);
+  if (m) return `${m[1].charAt(0).toUpperCase() + m[1].slice(1)} ${m[2]}.${m[3]}${ctxSuffix}`;
+
+  // Short names: "opus[1m]" → "Opus (1M)", "sonnet" → "Sonnet"
+  const short = base.match(/^(opus|sonnet|haiku)$/i);
+  if (short) return `${short[1].charAt(0).toUpperCase() + short[1].slice(1)}${ctxSuffix}`;
+
+  return model;
+}
+
+function formatSleepTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
 
 // Tool name display mapping
 const toolDisplayNames: Record<string, string> = {
@@ -39,6 +73,9 @@ interface AgentNodeCardProps {
   ticketId?: string;
   ticketTitle?: string;
   longRunningTool?: boolean;
+  tokens?: number;
+  model?: string;
+  sleepEndTime?: number;
 }
 
 export function AgentNodeCard({
@@ -54,19 +91,45 @@ export function AgentNodeCard({
   ticketId,
   ticketTitle,
   longRunningTool,
+  tokens,
+  model,
+  sleepEndTime,
 }: AgentNodeCardProps) {
-  // Available for future use
-  void agentId;
   const statusInfo = statusConfig[status] || statusConfig.idle;
   const isActive = statusInfo.isActive;
   const isToolCalling = status === "tool_calling";
   const needsAttention = statusInfo.needsAttention;
+  const isWaiting = status === "waiting";
+  const isCompacting = status === "compacting";
+  const isCalm = isWaiting || isCompacting; // Calm states: subtle border, no glow
 
-  const displayCwd = cwd;
-  const dirName = displayCwd ? displayCwd.split("/").pop() || displayCwd : null;
+  // When cwd is a worktree root like .../universe/.isaac/worktree_pool/worktree-02,
+  // the last segment "worktree-02" is meaningless — show the repo name instead.
+  // If the agent cd's into a subdir, the last segment is already useful as-is.
+  const dirName = cwd
+    ? (cwd.match(/\/([^/]+)\/\.isaac\/worktree_pool\/worktree-\d+$/)?.[1]
+      || cwd.split("/").pop()
+      || cwd)
+    : null;
 
   // Get display name for current tool
   const toolDisplay = currentTool ? (toolDisplayNames[currentTool] || currentTool) : null;
+
+  // Sleep countdown timer
+  const [sleepRemaining, setSleepRemaining] = useState<number | null>(null);
+  useEffect(() => {
+    if (!sleepEndTime) {
+      setSleepRemaining(null);
+      return;
+    }
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((sleepEndTime - Date.now()) / 1000));
+      setSleepRemaining(left > 0 ? left : null);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [sleepEndTime]);
 
   return (
     <div
@@ -77,12 +140,12 @@ export function AgentNodeCard({
         backgroundColor: "#1a1a1a",
         border: needsAttention
           ? `2px solid ${statusInfo.color}`
-          : isActive
+          : isActive || isCalm
           ? `1px solid ${statusInfo.color}40`
           : "1px solid #2a2a2a",
         boxShadow: needsAttention
           ? `0 0 16px ${statusInfo.color}40, 0 0 32px ${statusInfo.color}20, 0 4px 12px rgba(0, 0, 0, 0.4)`
-          : isActive
+          : isActive || isCalm
           ? `0 0 12px ${statusInfo.color}15, 0 4px 12px rgba(0, 0, 0, 0.4)`
           : selected
           ? "0 8px 24px rgba(0, 0, 0, 0.6)"
@@ -137,14 +200,21 @@ export function AgentNodeCard({
           <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
             {statusInfo.label}
           </span>
+          {/* Sleep countdown timer */}
+          {isWaiting && sleepRemaining != null && (
+            <span className="text-[10px] flex items-center gap-1" style={{ color: statusInfo.color }}>
+              <Clock className="w-2.5 h-2.5" />
+              {formatSleepTime(sleepRemaining)}
+            </span>
+          )}
           {/* Show long-running indicator or current tool */}
-          {longRunningTool && (
+          {!isWaiting && longRunningTool && (
             <span className="text-[10px] text-zinc-400 flex items-center gap-1">
               <Clock className="w-2.5 h-2.5" />
               Long task
             </span>
           )}
-          {isToolCalling && toolDisplay && !longRunningTool && (
+          {!isWaiting && isToolCalling && toolDisplay && !longRunningTool && (
             <span className="text-[10px] text-zinc-400 flex items-center gap-1">
               <Wrench className="w-2.5 h-2.5" />
               {toolDisplay}
@@ -170,7 +240,7 @@ export function AgentNodeCard({
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-white truncate leading-tight">{displayName}</h3>
-            <p className="text-[10px] text-zinc-500">{agentId}</p>
+            <p className="text-[10px] text-zinc-500">{model ? formatModelName(model) : agentId}</p>
           </div>
         </div>
 
@@ -186,8 +256,8 @@ export function AgentNodeCard({
           </div>
         )}
 
-        {/* Repo & Branch */}
-        {(dirName || gitBranch) && (
+        {/* Repo, Branch & Tokens */}
+        {(dirName || gitBranch || (tokens != null && tokens > 0)) && (
           <div className="mt-2 space-y-1">
             {dirName && (
               <div className="flex items-center gap-1.5">
@@ -199,6 +269,12 @@ export function AgentNodeCard({
               <div className="flex items-center gap-1.5">
                 <GitBranch className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
                 <span className="text-[11px] text-purple-400 font-mono truncate">{gitBranch}</span>
+              </div>
+            )}
+            {tokens != null && tokens > 0 && (
+              <div className="flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
+                <span className="text-[11px] text-zinc-400 font-mono">{formatTokens(tokens)}</span>
               </div>
             )}
           </div>

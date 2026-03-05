@@ -18,6 +18,7 @@ import { Sidebar } from "./components/Sidebar";
 import { NewSessionModal } from "./components/NewSessionModal";
 import { Header } from "./components/Header";
 import { CanvasControls } from "./components/CanvasControls";
+import { OnboardingTour } from "./components/OnboardingTour";
 import { CanvasTabs } from "./components/CanvasTabs";
 import { AuthBanner } from "./components/AuthBanner";
 
@@ -77,7 +78,12 @@ function AppContent() {
   useEffect(() => {
     fetch("/api/config")
       .then((res) => res.json())
-      .then((config) => setLaunchCwd(config.launchCwd))
+      .then((config) => {
+        const cwd = config.homeDir && config.launchCwd?.startsWith(config.homeDir)
+          ? "~" + config.launchCwd.slice(config.homeDir.length)
+          : config.launchCwd;
+        setLaunchCwd(cwd);
+      })
       .catch(console.error);
 
     fetch("/api/agents")
@@ -179,6 +185,37 @@ function AppContent() {
         return;
       }
 
+      // Cmd/Ctrl + I: Jump to next agent needing input
+      if (isMod && e.key === "i" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        const needsInputIds = agentNodeIds.filter((id) => {
+          const s = useStore.getState().sessions.get(id);
+          return s?.status === "waiting_input";
+        });
+        if (needsInputIds.length > 0) {
+          // Rotate: find current index and go to next
+          const currentIdx = selectedNodeId ? needsInputIds.indexOf(selectedNodeId) : -1;
+          const nextIdx = currentIdx >= needsInputIds.length - 1 ? 0 : currentIdx + 1;
+          setSelectedNodeId(needsInputIds[nextIdx]);
+          setSidebarOpen(true);
+        }
+        return;
+      }
+
+      // Cmd/Ctrl + N: New agent
+      if (isMod && e.key === "n" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        setAddAgentModalOpen(true);
+        return;
+      }
+
+      // ? key: Open help panel
+      if (e.key === "?" && !isMod) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("openui:toggle-help"));
+        return;
+      }
+
       // Escape to close sidebar
       if (e.key === "Escape" && sidebarOpen) {
         e.preventDefault();
@@ -194,6 +231,16 @@ function AppContent() {
   // Keyboard shortcuts for canvas switching
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // Cmd/Ctrl + K: Open conversation search (works even from inputs)
+      if (isMod && e.key === "k") {
+        e.preventDefault();
+        // Toggle the search modal via a custom event
+        window.dispatchEvent(new CustomEvent("openui:toggle-search"));
+        return;
+      }
+
       // Skip if typing in input/textarea
       const target = e.target as HTMLElement;
       if (
@@ -206,8 +253,6 @@ function AppContent() {
 
       // Get fresh state on each keypress to avoid stale closures
       const { canvases, addCanvas } = useStore.getState();
-
-      const isMod = e.metaKey || e.ctrlKey;
 
       // Cmd/Ctrl + Shift + 1-9: Switch to canvas by index
       if (isMod && e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "9") {
@@ -263,6 +308,15 @@ function AppContent() {
                 }
                 if ((existing.longRunningTool || false) !== (sessionData.longRunningTool || false)) {
                   updates.longRunningTool = sessionData.longRunningTool || false;
+                }
+                if (sessionData.tokens != null && existing.tokens !== sessionData.tokens) {
+                  updates.tokens = sessionData.tokens;
+                }
+                if (sessionData.model && existing.model !== sessionData.model) {
+                  updates.model = sessionData.model;
+                }
+                if ((existing.sleepEndTime || undefined) !== (sessionData.sleepEndTime || undefined)) {
+                  updates.sleepEndTime = sessionData.sleepEndTime;
                 }
                 if (Object.keys(updates).length > 0) {
                   updateSession(sessionData.nodeId, updates);
@@ -539,7 +593,7 @@ function AppContent() {
       <AuthBanner />
       <CanvasTabs />
 
-      <div className="flex-1 relative">
+      <div data-tour="canvas-area" className="flex-1 relative">
         <ReactFlow
           nodes={activeCanvasNodes}
           edges={[]}
@@ -603,6 +657,8 @@ function AppContent() {
         existingSession={newSessionForNodeId ? sessions.get(newSessionForNodeId) : undefined}
         existingNodeId={newSessionForNodeId || undefined}
       />
+
+      {sessions.size === 0 && <OnboardingTour />}
     </div>
   );
 }

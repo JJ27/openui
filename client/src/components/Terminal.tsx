@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { useStore, AgentStatus } from "../stores/useStore";
 
@@ -65,7 +66,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
         brightWhite: "#ffffff",
       },
       allowProposedApi: true,
-      scrollback: 10000,
+      scrollback: 7500,
     });
 
     const fitAddon = new FitAddon();
@@ -74,6 +75,19 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     term.loadAddon(webLinksAddon);
 
     term.open(terminalRef.current);
+
+    // GPU-accelerated rendering for better performance on long sessions
+    let webglAddon: WebglAddon | null = null;
+    try {
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon?.dispose();
+        webglAddon = null;
+      });
+      term.loadAddon(webglAddon);
+    } catch {
+      webglAddon = null;
+    }
 
     // Reset all terminal attributes before receiving buffered content
     term.write("\x1b[0m\x1b[?25h");
@@ -125,7 +139,15 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
                 if (mountedRef.current) term.scrollToBottom();
               }, 50);
             } else {
-              term.write(msg.data);
+              // Preserve scroll position: if user was at bottom, stay at bottom
+              // after xterm processes the data (which may include cursor-movement
+              // sequences that displace the viewport).
+              const wasAtBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+              term.write(msg.data, () => {
+                if (wasAtBottom && mountedRef.current) {
+                  term.scrollToBottom();
+                }
+              });
             }
           } else if (msg.type === "status") {
             // Handle status updates from plugin hooks
@@ -135,6 +157,8 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               currentTool: msg.currentTool,
               ...(msg.gitBranch ? { gitBranch: msg.gitBranch } : {}),
               longRunningTool: msg.longRunningTool || false,
+              ...(msg.model ? { model: msg.model } : {}),
+              sleepEndTime: msg.sleepEndTime,
             });
           } else if (msg.type === "auth_required") {
             // OAuth detected during session start — show auth banner
@@ -166,19 +190,28 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
       }
     });
 
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        if (fitAddonRef.current) {
-          fitAddonRef.current.fit();
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (!fitAddonRef.current || !xtermRef.current) return;
+
+        const t = xtermRef.current;
+        // Remember if user was scrolled to bottom
+        const wasAtBottom = t.buffer.active.viewportY >= t.buffer.active.baseY;
+
+        fitAddonRef.current.fit();
+
+        // Restore scroll position after fit to prevent viewport jumping
+        if (wasAtBottom) {
+          t.scrollToBottom();
         }
-        if (ws?.readyState === WebSocket.OPEN && xtermRef.current) {
-          ws.send(JSON.stringify({
-            type: "resize",
-            cols: xtermRef.current.cols,
-            rows: xtermRef.current.rows
-          }));
+
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "resize", cols: t.cols, rows: t.rows }));
         }
-      });
+      }, 150);
     });
 
     resizeObserver.observe(terminalRef.current);
@@ -186,8 +219,12 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     return () => {
       mountedRef.current = false;
       clearTimeout(connectTimeout);
+      if (resizeTimeout) clearTimeout(resizeTimeout);
       resizeObserver.disconnect();
       ws?.close();
+      // Dispose WebGL addon before terminal to avoid internal reference errors
+      try { webglAddon?.dispose(); } catch {}
+      webglAddon = null;
       term.dispose();
     };
   }, [sessionId, color, nodeId, updateSession]);

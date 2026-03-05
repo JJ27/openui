@@ -19,7 +19,7 @@ export interface Agent {
   icon: string;
 }
 
-export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "waiting" | "compacting" | "tool_calling" | "idle" | "disconnected" | "error";
 
 export interface AgentSession {
   id: string;
@@ -43,6 +43,12 @@ export interface AgentSession {
   currentTool?: string;
   // Whether the current tool has been running for a long time (> 5 min)
   longRunningTool?: boolean;
+  // Token usage from cost cache
+  tokens?: number;
+  // Model name (from plugin hook, e.g. "claude-sonnet-4-6")
+  model?: string;
+  // Sleep timer: epoch ms when sleep ends
+  sleepEndTime?: number;
   // Archive status
   archived?: boolean;
 }
@@ -109,6 +115,10 @@ interface AppState {
   authUrl: string | null;
   setAuthRequired: (url: string) => void;
   clearAuthRequired: () => void;
+
+  // Pending resume conversation (from search modal → new session modal bridge)
+  pendingResumeConversation: any | null;
+  setPendingResumeConversation: (conv: any | null) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -284,6 +294,9 @@ export const useStore = create<AppState>((set) => ({
   authUrl: null,
   setAuthRequired: (url) => set({ authRequired: true, authUrl: url }),
   clearAuthRequired: () => set({ authRequired: false, authUrl: null }),
+
+  pendingResumeConversation: null,
+  setPendingResumeConversation: (conv) => set({ pendingResumeConversation: conv }),
 
   loadState: async () => {
     const showArchived = useStore.getState().showArchived;

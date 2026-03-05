@@ -81,6 +81,7 @@ export function useAgentNodeState(
           branchName: opts.branchName,
           baseBranch: opts.baseBranch,
         } : {}),
+        ...(opts.prNumber ? { prNumber: opts.prNumber } : {}),
       }),
     });
 

@@ -58,7 +58,7 @@ export function CanvasTabs() {
   };
 
   return (
-    <div className="fixed top-14 left-0 right-0 h-11 bg-surface border-b border-border flex items-center px-4 gap-2 z-40">
+    <div data-tour="canvas-tabs" className="fixed top-14 left-0 right-0 h-11 bg-surface border-b border-border flex items-center px-4 gap-2 z-40">
       {canvases.map((canvas: any) => (
         <div
           key={canvas.id}
