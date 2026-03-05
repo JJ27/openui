@@ -385,12 +385,14 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     // Build the command with resume flag if we have a Claude session ID
     let finalCommand = injectPluginDir(session.command, session.agentId);
 
-    // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
+    // For Claude sessions, use --resume to restore the specific session.
+    // If the command already has --resume, that's the canonical ID — use it as-is.
+    // Only inject from claudeSessionId when there's no --resume yet (first resume).
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
-      // Remove any existing --resume flags first
-      finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
-
+    const existingResume = session.command.match(/--resume\s+([\w-]+)/);
+    if (existingResume) {
+      log(`\x1b[38;5;141m[session]\x1b[0m Using existing --resume ${existingResume[1]} from command`);
+    } else if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
       const resumeArg = `--resume ${session.claudeSessionId}`;
       if (finalCommand.includes("isaac claude")) {
         finalCommand = finalCommand.replace("isaac claude", `isaac claude ${resumeArg}`);
@@ -399,7 +401,9 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       } else if (finalCommand.startsWith("claude")) {
         finalCommand = finalCommand.replace(/^claude(\s|$)/, `claude ${resumeArg}$1`);
       }
-      log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId}`);
+      // Persist --resume into the command so future restarts use the correct ID
+      session.command = session.command.replace(/^(isaac claude|llm agent claude|claude)/, `$1 ${resumeArg}`);
+      log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId} (persisted to command)`);
     }
 
     setTimeout(() => {
@@ -684,8 +688,8 @@ apiRoutes.post("/status-update", async (c) => {
   }
 
   if (session) {
-    // Store Claude session ID mapping if we have it
-    if (claudeSessionId && !session.claudeSessionId) {
+    // Always update Claude session ID — Claude may issue a new ID on resume
+    if (claudeSessionId) {
       session.claudeSessionId = claudeSessionId;
     }
 
