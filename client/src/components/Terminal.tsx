@@ -77,10 +77,16 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     term.open(terminalRef.current);
 
     // GPU-accelerated rendering for better performance on long sessions
+    let webglAddon: WebglAddon | null = null;
     try {
-      term.loadAddon(new WebglAddon());
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon?.dispose();
+        webglAddon = null;
+      });
+      term.loadAddon(webglAddon);
     } catch {
-      // WebGL not available — falls back to default canvas renderer
+      webglAddon = null;
     }
 
     // Reset all terminal attributes before receiving buffered content
@@ -216,6 +222,9 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       resizeObserver.disconnect();
       ws?.close();
+      // Dispose WebGL addon before terminal to avoid internal reference errors
+      try { webglAddon?.dispose(); } catch {}
+      webglAddon = null;
       term.dispose();
     };
   }, [sessionId, color, nodeId, updateSession]);
