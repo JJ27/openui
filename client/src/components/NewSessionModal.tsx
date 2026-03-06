@@ -1051,7 +1051,7 @@ export function NewSessionModal({
                         type="text"
                         value={cwd}
                         onChange={(e) => setCwd(e.target.value)}
-                        placeholder={existingSession?.cwd || launchCwd || "~/"}
+                        placeholder={(existingSession?.cwd || launchCwd || "~/").replace(/^\/home\/[^/]+/, "~")}
                         className="flex-1 px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors font-mono"
                       />
                       <button

@@ -115,7 +115,7 @@ export function Header() {
 
         <div className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Folder className="w-3 h-3" />
-          <span className="font-mono truncate max-w-[200px]">{launchCwd || "~"}</span>
+          <span className="font-mono truncate max-w-[200px]">{launchCwd?.replace(/^\/home\/[^/]+/, "~") || "~"}</span>
         </div>
       </div>
 
@@ -235,13 +235,12 @@ export function Header() {
         olderUpdates={olderUpdates}
         onMarkAsSeen={markAsSeen}
         onRestartTour={() => {
-          // Reset tour completion in server config, then reload
           fetch("/api/settings", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ tourCompleted: false }),
           })
-            .then(() => window.location.reload())
+            .then(() => window.dispatchEvent(new CustomEvent("openui:restart-tour")))
             .catch(() => {});
         }}
       />

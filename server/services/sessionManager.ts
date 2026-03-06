@@ -162,14 +162,18 @@ export async function createSession(params: {
     if (branchName) {
       // Pre-create branch from baseBranch if the branch doesn't exist yet
       if (baseBranch && HAS_ISAAC) {
-        const branchExists = spawnSync(["git", "rev-parse", "--verify", branchName], {
-          cwd: originalCwd, stdout: "pipe", stderr: "pipe",
-        }).exitCode === 0;
-        if (!branchExists) {
-          log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${branchName}" from "${baseBranch}"`);
-          spawnSync(["git", "branch", branchName, baseBranch], {
+        try {
+          const branchExists = spawnSync(["git", "rev-parse", "--verify", branchName], {
             cwd: originalCwd, stdout: "pipe", stderr: "pipe",
-          });
+          }).exitCode === 0;
+          if (!branchExists) {
+            log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${branchName}" from "${baseBranch}"`);
+            spawnSync(["git", "branch", branchName, baseBranch], {
+              cwd: originalCwd, stdout: "pipe", stderr: "pipe",
+            });
+          }
+        } catch {
+          log(`\x1b[38;5;208m[git]\x1b[0m git not available, skipping branch pre-creation`);
         }
       }
       isaacFlags += ` --worktree --branch "${branchName}"`;

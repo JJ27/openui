@@ -452,14 +452,18 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   if (body.branchName) {
     // Pre-create branch from baseBranch if it doesn't exist yet
     if (body.baseBranch && DEFAULT_CLAUDE_COMMAND === "isaac claude") {
-      const branchExists = spawnSync(["git", "rev-parse", "--verify", body.branchName], {
-        cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
-      }).exitCode === 0;
-      if (!branchExists) {
-        log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${body.branchName}" from "${body.baseBranch}"`);
-        spawnSync(["git", "branch", body.branchName, body.baseBranch], {
+      try {
+        const branchExists = spawnSync(["git", "rev-parse", "--verify", body.branchName], {
           cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
-        });
+        }).exitCode === 0;
+        if (!branchExists) {
+          log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${body.branchName}" from "${body.baseBranch}"`);
+          spawnSync(["git", "branch", body.branchName, body.baseBranch], {
+            cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
+          });
+        }
+      } catch {
+        log(`\x1b[38;5;208m[git]\x1b[0m git not available, skipping branch pre-creation`);
       }
     }
     isaacFlags += ` --worktree --branch "${body.branchName}"`;
