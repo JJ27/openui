@@ -122,6 +122,17 @@ export function OnboardingTour() {
       .catch(() => {});
   }, []);
 
+  // Listen for restart-tour event (from Help modal)
+  useEffect(() => {
+    const handler = () => {
+      setPhase("welcome");
+      setStep(0);
+      setVisible(true);
+    };
+    window.addEventListener("openui:restart-tour", handler);
+    return () => window.removeEventListener("openui:restart-tour", handler);
+  }, []);
+
   // Measure target element for current step; returns true if found
   const measureTarget = useCallback((target: string): boolean => {
     const el = document.querySelector(`[data-tour="${target}"]`);

@@ -79,10 +79,7 @@ function AppContent() {
     fetch("/api/config")
       .then((res) => res.json())
       .then((config) => {
-        const cwd = config.homeDir && config.launchCwd?.startsWith(config.homeDir)
-          ? "~" + config.launchCwd.slice(config.homeDir.length)
-          : config.launchCwd;
-        setLaunchCwd(cwd);
+        setLaunchCwd(config.launchCwd);
       })
       .catch(console.error);
 
@@ -153,8 +150,8 @@ function AppContent() {
       const isMod = e.metaKey || e.ctrlKey;
       const agentNodeIds = getAgentNodeIds();
 
-      // Cmd/Ctrl + 1-9 for agents on current canvas
-      if (isMod && e.key >= "1" && e.key <= "9" && !e.shiftKey && !e.altKey) {
+      // Alt + 1-9 for agents on current canvas
+      if (e.altKey && e.key >= "1" && e.key <= "9" && !e.shiftKey && !isMod) {
         if (agentNodeIds.length > 0) {
           e.preventDefault();
           const index = parseInt(e.key) - 1;
@@ -166,8 +163,8 @@ function AppContent() {
         return;
       }
 
-      // Cmd/Ctrl + [ (prev) and ] (next) for agents
-      if (isMod && (e.key === "[" || e.key === "]") && agentNodeIds.length > 0) {
+      // Alt + [ (prev) and ] (next) for agents
+      if (e.altKey && (e.key === "[" || e.key === "]") && !isMod && agentNodeIds.length > 0) {
         e.preventDefault();
         const currentIndex = selectedNodeId
           ? agentNodeIds.indexOf(selectedNodeId)
@@ -202,8 +199,8 @@ function AppContent() {
         return;
       }
 
-      // Cmd/Ctrl + N: New agent
-      if (isMod && e.key === "n" && !e.shiftKey && !e.altKey) {
+      // Alt + N: New agent
+      if (e.altKey && e.key === "n" && !e.shiftKey && !isMod) {
         e.preventDefault();
         setAddAgentModalOpen(true);
         return;
@@ -254,8 +251,8 @@ function AppContent() {
       // Get fresh state on each keypress to avoid stale closures
       const { canvases, addCanvas } = useStore.getState();
 
-      // Cmd/Ctrl + Shift + 1-9: Switch to canvas by index
-      if (isMod && e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "9") {
+      // Alt + Shift + 1-9: Switch to canvas by index
+      if (e.altKey && e.shiftKey && !isMod && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
         const index = parseInt(e.key) - 1;
         if (index < canvases.length) {
@@ -264,8 +261,8 @@ function AppContent() {
         return;
       }
 
-      // Cmd/Ctrl + Shift + T: New canvas
-      if (isMod && e.shiftKey && e.key === "t") {
+      // Alt + T: New canvas
+      if (e.altKey && e.key === "t" && !isMod && !e.shiftKey) {
         e.preventDefault();
         const newCanvas = {
           id: `canvas-${Date.now()}`,
@@ -658,7 +655,7 @@ function AppContent() {
         existingNodeId={newSessionForNodeId || undefined}
       />
 
-      {sessions.size === 0 && <OnboardingTour />}
+      <OnboardingTour />
     </div>
   );
 }

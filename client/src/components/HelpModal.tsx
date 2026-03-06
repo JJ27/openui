@@ -7,13 +7,13 @@ const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
 const mod = isMac ? "\u2318" : "Ctrl";
 
 const shortcuts: { keys: string; desc: string }[] = [
-  { keys: `${mod}+1\u20139`, desc: "Select agent by position" },
-  { keys: `${mod}+[ / ]`, desc: "Previous / next agent" },
+  { keys: `Alt+1\u20139`, desc: "Select agent by position" },
+  { keys: `Alt+[ / ]`, desc: "Previous / next agent" },
   { keys: `${mod}+I`, desc: "Jump to next agent needing input" },
   { keys: `${mod}+K`, desc: "Search conversations" },
-  { keys: `${mod}+N`, desc: "New agent" },
-  { keys: `${mod}+Shift+1\u20139`, desc: "Switch canvas by index" },
-  { keys: `${mod}+Shift+T`, desc: "New canvas" },
+  { keys: `Alt+N`, desc: "New agent" },
+  { keys: `Alt+Shift+1\u20139`, desc: "Switch canvas by index" },
+  { keys: `Alt+T`, desc: "New canvas" },
   { keys: `?`, desc: "Open this help panel" },
   { keys: "Esc", desc: "Close sidebar / dialogs" },
 ];
