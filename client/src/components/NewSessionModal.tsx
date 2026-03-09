@@ -398,11 +398,21 @@ export function NewSessionModal({
 
   const isCreateDisabled = !selectedAgent || isCreating || (!selectedAgent?.command && !commandArgs && activeTab !== "resume") || (activeTab === "github" && !selectedGithubIssue) || (activeTab === "resume" && !selectedConversation);
 
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); handleClose(); }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [open]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !isCreateDisabled) {
-      // Don't intercept Enter in the GitHub repo input or resume search input
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Don't intercept Enter in search inputs where it triggers a search
+      const el = e.target as HTMLElement;
+      if (el.dataset.enterSearch) return;
       e.preventDefault();
       handleCreate();
     }
@@ -571,6 +581,7 @@ export function NewSessionModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={handleClose}
+            data-modal-overlay
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
           />
 
@@ -826,6 +837,7 @@ export function NewSessionModal({
                                 type="text"
                                 value={resumeQuery}
                                 onChange={(e) => setResumeQuery(e.target.value)}
+                                data-enter-search="true"
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") searchResumeConversations(resumeQuery);
                                 }}
