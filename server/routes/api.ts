@@ -451,23 +451,32 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   // Build isaac flags for worktree/branch/PR
   let isaacFlags = "";
   if (body.branchName) {
-    // Pre-create branch from baseBranch if it doesn't exist yet
-    if (body.baseBranch && DEFAULT_CLAUDE_COMMAND === "isaac claude") {
-      try {
-        const branchExists = spawnSync(["git", "rev-parse", "--verify", body.branchName], {
-          cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
-        }).exitCode === 0;
-        if (!branchExists) {
-          log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${body.branchName}" from "${body.baseBranch}"`);
-          spawnSync(["git", "branch", body.branchName, body.baseBranch], {
-            cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
-          });
+    // Check if the branch is already checked out in an existing worktree
+    let existingWorktreePath: string | null = null;
+    try {
+      const wtResult = spawnSync(["git", "worktree", "list", "--porcelain"], {
+        cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
+      });
+      if (wtResult.exitCode === 0) {
+        const blocks = wtResult.stdout.toString().split("\n\n");
+        for (const block of blocks) {
+          if (block.includes(`branch refs/heads/${body.branchName}\n`) || block.endsWith(`branch refs/heads/${body.branchName}`)) {
+            const pathMatch = block.match(/^worktree (.+)$/m);
+            if (pathMatch) {
+              existingWorktreePath = pathMatch[1];
+              break;
+            }
+          }
         }
-      } catch {
-        log(`\x1b[38;5;208m[git]\x1b[0m git not available, skipping branch pre-creation`);
       }
+    } catch {}
+
+    if (existingWorktreePath) {
+      log(`\x1b[38;5;141m[git]\x1b[0m Branch "${body.branchName}" already at ${existingWorktreePath}`);
+      effectiveCwd = existingWorktreePath;
+    } else {
+      isaacFlags += ` --worktree --branch "${body.branchName}"`;
     }
-    isaacFlags += ` --worktree --branch "${body.branchName}"`;
     gitBranch = body.branchName;
   }
   if (body.prNumber) {
