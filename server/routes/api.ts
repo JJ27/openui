@@ -259,7 +259,8 @@ apiRoutes.post("/sessions", async (c) => {
   } = body;
 
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const workingDir = cwd || LAUNCH_CWD;
+  const rawCwd = cwd ? cwd.replace(/^~(?=$|\/)/, homedir()) : LAUNCH_CWD;
+  const workingDir = rawCwd;
 
   try {
     const result = await createSession({
@@ -444,7 +445,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   const customName = body.customName || `${parentName} (fork)`;
   const customColor = body.customColor || session.customColor;
 
-  let effectiveCwd = body.cwd || session.cwd;
+  let effectiveCwd = (body.cwd ? body.cwd.replace(/^~(?=$|\/)/, homedir()) : null) || session.cwd;
   let gitBranch = session.gitBranch;
 
   // Build isaac flags for worktree/branch/PR

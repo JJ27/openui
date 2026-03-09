@@ -13,6 +13,16 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [updateChannel, setUpdateChannel] = useState("stable");
   const [isSaving, setIsSaving] = useState(false);
 
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); onClose(); }
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [open, onClose]);
+
   // Load existing config
   useEffect(() => {
     if (open) {
@@ -55,6 +65,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            data-modal-overlay
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
             onClick={onClose}
           />

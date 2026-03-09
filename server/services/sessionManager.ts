@@ -142,7 +142,7 @@ export async function createSession(params: {
     agentId,
     agentName,
     command,
-    cwd: originalCwd,
+    cwd: rawCwd,
     nodeId,
     customName,
     customColor,
@@ -154,6 +154,9 @@ export async function createSession(params: {
     prNumber,
     ticketPromptTemplate,
   } = params;
+
+  // Expand ~ in cwd
+  const originalCwd = rawCwd.replace(/^~(?=$|\/)/, homedir());
 
   // Build isaac flags for worktree/branch/PR
   let isaacFlags = "";

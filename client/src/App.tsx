@@ -137,24 +137,19 @@ function AppContent() {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Skip if typing in input/textarea
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
-        return;
-      }
-
       const isMod = e.metaKey || e.ctrlKey;
       const agentNodeIds = getAgentNodeIds();
+      const isInInput = () => {
+        const target = e.target as HTMLElement;
+        return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+      };
 
-      // Alt + 1-9 for agents on current canvas
-      if (e.altKey && e.key >= "1" && e.key <= "9" && !e.shiftKey && !isMod) {
+      // Alt + 1-9 for agents on current canvas (works from terminal too)
+      const digitMatch = e.altKey && !e.shiftKey && !isMod && e.code?.match(/^Digit(\d)$/);
+      if (digitMatch) {
         if (agentNodeIds.length > 0) {
           e.preventDefault();
-          const index = parseInt(e.key) - 1;
+          const index = parseInt(digitMatch[1]) - 1;
           if (index < agentNodeIds.length) {
             setSelectedNodeId(agentNodeIds[index]);
             setSidebarOpen(true);
@@ -164,13 +159,13 @@ function AppContent() {
       }
 
       // Alt + [ (prev) and ] (next) for agents
-      if (e.altKey && (e.key === "[" || e.key === "]") && !isMod && agentNodeIds.length > 0) {
+      if (e.altKey && (e.code === "BracketLeft" || e.code === "BracketRight") && !isMod && agentNodeIds.length > 0) {
         e.preventDefault();
         const currentIndex = selectedNodeId
           ? agentNodeIds.indexOf(selectedNodeId)
           : -1;
         const newIndex =
-          e.key === "["
+          e.code === "BracketLeft"
             ? currentIndex <= 0
               ? agentNodeIds.length - 1
               : currentIndex - 1
@@ -183,7 +178,7 @@ function AppContent() {
       }
 
       // Cmd/Ctrl + I: Jump to next agent needing input
-      if (isMod && e.key === "i" && !e.shiftKey && !e.altKey) {
+      if (isMod && e.key === "i" && !e.shiftKey && !e.altKey && !isInInput()) {
         e.preventDefault();
         const needsInputIds = agentNodeIds.filter((id) => {
           const s = useStore.getState().sessions.get(id);
@@ -200,29 +195,30 @@ function AppContent() {
       }
 
       // Alt + N: New agent
-      if (e.altKey && e.key === "n" && !e.shiftKey && !isMod) {
+      if (e.altKey && e.code === "KeyN" && !e.shiftKey && !isMod) {
         e.preventDefault();
         setAddAgentModalOpen(true);
         return;
       }
 
       // ? key: Open help panel
-      if (e.key === "?" && !isMod) {
+      if (e.key === "?" && !isMod && !isInInput()) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("openui:toggle-help"));
         return;
       }
 
-      // Escape to close sidebar
-      if (e.key === "Escape" && sidebarOpen) {
+      // Escape to close sidebar (skip if a dialog is open or inside terminal/input)
+      const hasOpenDialog = document.querySelector("[data-modal-overlay]");
+      if (e.key === "Escape" && sidebarOpen && !isInInput() && !hasOpenDialog) {
         e.preventDefault();
         setSidebarOpen(false);
         setSelectedNodeId(null);
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [activeCanvasNodes, selectedNodeId, sidebarOpen, setSelectedNodeId, setSidebarOpen]);
 
   // Keyboard shortcuts for canvas switching
@@ -238,23 +234,14 @@ function AppContent() {
         return;
       }
 
-      // Skip if typing in input/textarea
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
-        return;
-      }
-
       // Get fresh state on each keypress to avoid stale closures
       const { canvases, addCanvas } = useStore.getState();
 
       // Alt + Shift + 1-9: Switch to canvas by index
-      if (e.altKey && e.shiftKey && !isMod && e.key >= "1" && e.key <= "9") {
+      const shiftDigitMatch = e.altKey && e.shiftKey && !isMod && e.code?.match(/^Digit(\d)$/);
+      if (shiftDigitMatch) {
         e.preventDefault();
-        const index = parseInt(e.key) - 1;
+        const index = parseInt(shiftDigitMatch[1]) - 1;
         if (index < canvases.length) {
           setActiveCanvasId(canvases[index].id);
         }
@@ -262,7 +249,7 @@ function AppContent() {
       }
 
       // Alt + T: New canvas
-      if (e.altKey && e.key === "t" && !isMod && !e.shiftKey) {
+      if (e.altKey && e.code === "KeyT" && !isMod && !e.shiftKey) {
         e.preventDefault();
         const newCanvas = {
           id: `canvas-${Date.now()}`,
@@ -283,8 +270,8 @@ function AppContent() {
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [setActiveCanvasId]);
 
   // Poll for status updates every second to catch any missed WebSocket messages
