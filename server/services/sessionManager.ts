@@ -156,30 +156,41 @@ export async function createSession(params: {
   } = params;
 
   // Expand ~ in cwd
-  const originalCwd = rawCwd.replace(/^~(?=$|\/)/, homedir());
+  let originalCwd = rawCwd.replace(/^~(?=$|\/)/, homedir());
 
   // Build isaac flags for worktree/branch/PR
   let isaacFlags = "";
   let gitBranch: string | null = null;
   if (agentId === "claude") {
     if (branchName) {
-      // Pre-create branch from baseBranch if the branch doesn't exist yet
-      if (baseBranch && HAS_ISAAC) {
-        try {
-          const branchExists = spawnSync(["git", "rev-parse", "--verify", branchName], {
-            cwd: originalCwd, stdout: "pipe", stderr: "pipe",
-          }).exitCode === 0;
-          if (!branchExists) {
-            log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${branchName}" from "${baseBranch}"`);
-            spawnSync(["git", "branch", branchName, baseBranch], {
-              cwd: originalCwd, stdout: "pipe", stderr: "pipe",
-            });
+      // Check if the branch is already checked out in an existing worktree
+      let existingWorktreePath: string | null = null;
+      try {
+        const wtResult = spawnSync(["git", "worktree", "list", "--porcelain"], {
+          cwd: originalCwd, stdout: "pipe", stderr: "pipe",
+        });
+        if (wtResult.exitCode === 0) {
+          const blocks = wtResult.stdout.toString().split("\n\n");
+          for (const block of blocks) {
+            if (block.includes(`branch refs/heads/${branchName}\n`) || block.endsWith(`branch refs/heads/${branchName}`)) {
+              const pathMatch = block.match(/^worktree (.+)$/m);
+              if (pathMatch) {
+                existingWorktreePath = pathMatch[1];
+                break;
+              }
+            }
           }
-        } catch {
-          log(`\x1b[38;5;208m[git]\x1b[0m git not available, skipping branch pre-creation`);
         }
+      } catch {}
+
+      if (existingWorktreePath) {
+        // Branch already checked out — start in that directory directly
+        log(`\x1b[38;5;141m[git]\x1b[0m Branch "${branchName}" already at ${existingWorktreePath}`);
+        originalCwd = existingWorktreePath;
+      } else {
+        // Let isaac create a new worktree for this branch
+        isaacFlags += ` --worktree --branch "${branchName}"`;
       }
-      isaacFlags += ` --worktree --branch "${branchName}"`;
       gitBranch = branchName;
     }
     if (prNumber) {
