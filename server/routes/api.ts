@@ -259,7 +259,24 @@ apiRoutes.post("/sessions", async (c) => {
   } = body;
 
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const rawCwd = cwd ? cwd.replace(/^~(?=$|\/)/, homedir()) : LAUNCH_CWD;
+  let rawCwd = cwd ? cwd.replace(/^~(?=$|\/)/, homedir()) : LAUNCH_CWD;
+
+  // When resuming a session, look up the original cwd from state.json
+  // (e.g., the session may have been in a worktree that projectPath doesn't capture)
+  const resumeMatch = command?.match(/--resume\s+([\w-]+)/);
+  if (resumeMatch) {
+    const claudeSessionId = resumeMatch[1];
+    const state = loadState();
+    const matchingNode = state.nodes.find(n =>
+      n.claudeSessionId === claudeSessionId ||
+      n.command?.includes(`--resume ${claudeSessionId}`)
+    );
+    if (matchingNode?.cwd) {
+      log(`\x1b[38;5;141m[session]\x1b[0m Resume: using archived cwd ${matchingNode.cwd}`);
+      rawCwd = matchingNode.cwd;
+    }
+  }
+
   const workingDir = rawCwd;
 
   try {
@@ -480,7 +497,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     gitBranch = body.branchName;
   }
   if (body.prNumber) {
-    isaacFlags += ` --pr ${body.prNumber}`;
+    isaacFlags += ` --worktree --pr ${body.prNumber}`;
     if (!gitBranch) gitBranch = `PR #${body.prNumber}`;
   }
 

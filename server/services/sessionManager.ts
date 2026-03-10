@@ -194,7 +194,7 @@ export async function createSession(params: {
       gitBranch = branchName;
     }
     if (prNumber) {
-      isaacFlags += ` --pr ${prNumber}`;
+      isaacFlags += ` --worktree --pr ${prNumber}`;
       if (!gitBranch) gitBranch = `PR #${prNumber}`;
     }
   }
