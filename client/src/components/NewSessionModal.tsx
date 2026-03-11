@@ -424,7 +424,10 @@ export function NewSessionModal({
     setIsCreating(true);
 
     try {
-      const workingDir = cwd || (isReplacing ? existingSession?.cwd : null) || launchCwd;
+      // When resuming, always use the conversation's project path
+      const workingDir = (activeTab === "resume" && selectedConversation?.projectPath)
+        ? selectedConversation.projectPath
+        : cwd || (isReplacing ? existingSession?.cwd : null) || launchCwd;
 
       // If resuming a conversation, inject --resume flag
       let effectiveCommandArgs = commandArgs;
@@ -1061,15 +1064,17 @@ export function NewSessionModal({
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        value={cwd}
+                        value={activeTab === "resume" && selectedConversation ? selectedConversation.projectPath : cwd}
                         onChange={(e) => setCwd(e.target.value)}
+                        disabled={activeTab === "resume" && !!selectedConversation}
                         placeholder={(existingSession?.cwd || launchCwd || "~/").replace(/^\/home\/[^/]+/, "~")}
-                        className="flex-1 px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors font-mono"
+                        className="flex-1 px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors font-mono disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <button
                         type="button"
                         onClick={openDirPicker}
-                        className="px-3 py-2 rounded-md bg-canvas border border-border text-zinc-400 hover:text-white hover:bg-surface-active transition-colors"
+                        disabled={activeTab === "resume" && !!selectedConversation}
+                        className="px-3 py-2 rounded-md bg-canvas border border-border text-zinc-400 hover:text-white hover:bg-surface-active transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         title="Browse directories"
                       >
                         <FolderOpen className="w-4 h-4" />

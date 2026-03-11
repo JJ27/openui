@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { spawn as spawnPty } from "bun-pty";
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import type { Session } from "../types";
@@ -15,6 +15,36 @@ const logError = QUIET ? () => {} : console.error.bind(console);
 const HAS_ISAAC = spawnSync(["which", "isaac"], { stdout: "pipe", stderr: "pipe" }).exitCode === 0;
 export const DEFAULT_CLAUDE_COMMAND = HAS_ISAAC ? "isaac claude" : "llm agent claude";
 log(`\x1b[38;5;141m[cli]\x1b[0m Detected CLI: ${DEFAULT_CLAUDE_COMMAND} (isaac ${HAS_ISAAC ? "found" : "not found"})`);
+
+// Resolve the correct cwd for resuming a Claude session.
+// Claude stores sessions by project path (derived from cwd at creation time).
+// The cwd in state.json can drift (e.g., agent cd'd into a subdirectory), so
+// on resume the PTY cwd may not match where Claude stored the session.
+// This reads the session's JSONL first line to get the original cwd.
+export function resolveResumeCwd(sessionCwd: string, claudeSessionId: string | undefined): string {
+  if (!claudeSessionId) return sessionCwd;
+  const sessionFile = `${claudeSessionId}.jsonl`;
+  const projectsDir = join(homedir(), ".claude", "projects");
+  try {
+    // Search project dirs for the session JSONL (typically <100 dirs, very fast)
+    for (const dir of readdirSync(projectsDir)) {
+      const filePath = join(projectsDir, dir, sessionFile);
+      if (existsSync(filePath)) {
+        // Read only first line (session JSONLs can be large, avoid reading entire file)
+        const headResult = spawnSync(["head", "-1", filePath], { stdout: "pipe", stderr: "pipe" });
+        if (headResult.exitCode !== 0) return sessionCwd;
+        const firstLine = headResult.stdout.toString().trim();
+        const meta = JSON.parse(firstLine);
+        if (meta.cwd && meta.cwd !== sessionCwd) {
+          log(`\x1b[38;5;141m[auto-resume]\x1b[0m cwd corrected: ${sessionCwd} → ${meta.cwd}`);
+          return meta.cwd;
+        }
+        return sessionCwd;
+      }
+    }
+  } catch {}
+  return sessionCwd;
+}
 
 // Get the OpenUI plugin directory path
 function getPluginDir(): string | null {
@@ -194,7 +224,7 @@ export async function createSession(params: {
       gitBranch = branchName;
     }
     if (prNumber) {
-      isaacFlags += ` --pr ${prNumber}`;
+      isaacFlags += ` --worktree --pr ${prNumber}`;
       if (!gitBranch) gitBranch = `PR #${prNumber}`;
     }
   }
@@ -397,10 +427,13 @@ export function autoResumeSessions() {
 
     const startFn = () => {
       try {
+        // Resolve the correct cwd for Claude session discovery
+        const resumeCwd = resolveResumeCwd(session.cwd, session.claudeSessionId);
+
         // Spawn a new PTY for this session
         const ptyProcess = spawnPty("/bin/bash", [], {
           name: "xterm-256color",
-          cwd: session.cwd,
+          cwd: resumeCwd,
           env: {
             ...process.env,
             TERM: "xterm-256color",

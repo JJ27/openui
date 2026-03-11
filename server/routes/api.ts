@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND, resolveResumeCwd } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { getTokensForSession } from "../services/costCache";
@@ -259,7 +259,26 @@ apiRoutes.post("/sessions", async (c) => {
   } = body;
 
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const rawCwd = cwd ? cwd.replace(/^~(?=$|\/)/, homedir()) : LAUNCH_CWD;
+  let rawCwd = cwd ? cwd.replace(/^~(?=$|\/)/, homedir()) : LAUNCH_CWD;
+
+  // When resuming a session, resolve the correct cwd.
+  // First check state.json, then verify against Claude's JSONL to handle cwd drift.
+  const resumeMatch = command?.match(/--resume\s+([\w-]+)/);
+  if (resumeMatch) {
+    const claudeSessionId = resumeMatch[1];
+    const state = loadState();
+    const matchingNode = state.nodes.find(n =>
+      n.claudeSessionId === claudeSessionId ||
+      n.command?.includes(`--resume ${claudeSessionId}`)
+    );
+    if (matchingNode?.cwd) {
+      log(`\x1b[38;5;141m[session]\x1b[0m Resume: using archived cwd ${matchingNode.cwd}`);
+      rawCwd = matchingNode.cwd;
+    }
+    // Verify against Claude's session JSONL (cwd in state.json may have drifted)
+    rawCwd = resolveResumeCwd(rawCwd, claudeSessionId);
+  }
+
   const workingDir = rawCwd;
 
   try {
@@ -480,7 +499,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     gitBranch = body.branchName;
   }
   if (body.prNumber) {
-    isaacFlags += ` --pr ${body.prNumber}`;
+    isaacFlags += ` --worktree --pr ${body.prNumber}`;
     if (!gitBranch) gitBranch = `PR #${body.prNumber}`;
   }
 
