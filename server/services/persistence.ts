@@ -260,8 +260,9 @@ export function saveState(sessions: Map<string, Session>) {
   const defaultCanvas = state.canvases.find(c => c.isDefault) || state.canvases[0];
   const defaultCanvasId = defaultCanvas?.id || "canvas-default";
 
-  // Add active sessions from sessions Map
+  // Add active sessions from sessions Map (skip shell sessions — they're ephemeral)
   for (const [sessionId, session] of sessions) {
+    if (session.agentId === "shell") continue;
     // Preserve existing position if we have one
     const existingNode = savedState.nodes.find(n => n.sessionId === sessionId);
 
@@ -286,6 +287,7 @@ export function saveState(sessions: Map<string, Session>) {
       icon: session.icon,
       position: session.position || existingNode?.position || { x: 0, y: 0 },
       claudeSessionId: session.claudeSessionId,  // Persist Claude session ID for --resume
+      claudeSessionHistory: session.claudeSessionHistory,
       archived: session.archived || false,
       autoResumed: session.autoResumed || false,  // Track if session was auto-resumed
       canvasId,  // Canvas/tab this agent belongs to

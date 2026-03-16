@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock, Zap } from "lucide-react";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench, Clock, Zap, Flame, Archive, Trash2, Loader2, Coffee, AlertTriangle, RefreshCw } from "lucide-react";
 import { AgentStatus } from "../../stores/useStore";
 
 // Status config with visual priority levels
@@ -15,9 +15,9 @@ const statusConfig: Record<AgentStatus, { label: string; color: string; isActive
 };
 
 function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tokens`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K tokens`;
-  return `${n} tokens`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return `${n}`;
 }
 
 function formatModelName(model: string): string {
@@ -74,8 +74,12 @@ interface AgentNodeCardProps {
   ticketTitle?: string;
   longRunningTool?: boolean;
   tokens?: number;
+  totalTokens?: number;
   model?: string;
+  command?: string;
   sleepEndTime?: number;
+  onArchive?: () => void;
+  onDelete?: () => void;
 }
 
 export function AgentNodeCard({
@@ -92,8 +96,12 @@ export function AgentNodeCard({
   ticketTitle,
   longRunningTool,
   tokens,
+  totalTokens,
   model,
+  command,
   sleepEndTime,
+  onArchive,
+  onDelete,
 }: AgentNodeCardProps) {
   const statusInfo = statusConfig[status] || statusConfig.idle;
   const isActive = statusInfo.isActive;
@@ -133,7 +141,7 @@ export function AgentNodeCard({
 
   return (
     <div
-      className={`relative w-[220px] rounded-lg transition-all duration-300 cursor-pointer ${
+      className={`group relative w-[220px] rounded-lg transition-all duration-300 cursor-pointer ${
         selected ? "ring-1 ring-white/20" : ""
       }`}
       style={{
@@ -174,58 +182,75 @@ export function AgentNodeCard({
         />
       )}
 
-      {/* Status banner */}
-      <div
-        className="px-3 py-1.5 flex items-center justify-between relative"
-        style={{ borderBottom: `1px solid ${statusInfo.color}20` }}
-      >
-        <div className="flex items-center gap-2">
-          {/* Status indicator - animated ring for active */}
-          <div className="relative flex items-center justify-center">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: statusInfo.color }}
-            />
-            {isActive && (
-              <div
-                className="absolute w-3 h-3 rounded-full animate-ping"
-                style={{
-                  backgroundColor: statusInfo.color,
-                  opacity: 0.4,
-                  animationDuration: '1.5s'
-                }}
-              />
-            )}
-          </div>
-          <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
-            {statusInfo.label}
-          </span>
-          {/* Sleep countdown timer */}
-          {isWaiting && sleepRemaining != null && (
-            <span className="text-[10px] flex items-center gap-1" style={{ color: statusInfo.color }}>
-              <Clock className="w-2.5 h-2.5" />
-              {formatSleepTime(sleepRemaining)}
-            </span>
+      {/* Hover action buttons */}
+      {(onArchive || onDelete) && (
+        <div className="absolute top-1 right-1 z-10 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onArchive && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onArchive(); }}
+              className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-amber-400 transition-colors"
+              title="Archive"
+            >
+              <Archive className="w-3 h-3" />
+            </button>
           )}
-          {/* Show long-running indicator or current tool */}
-          {!isWaiting && longRunningTool && (
-            <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-              <Clock className="w-2.5 h-2.5" />
-              Long task
-            </span>
-          )}
-          {!isWaiting && isToolCalling && toolDisplay && !longRunningTool && (
-            <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-              <Wrench className="w-2.5 h-2.5" />
-              {toolDisplay}
-            </span>
+          {onDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-red-400 transition-colors"
+              title="Delete"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
           )}
         </div>
-        {status === "waiting_input" && (
+      )}
+
+      {/* Status banner */}
+      <div
+        className="px-3 py-1.5 flex items-center gap-2 relative"
+        style={{ borderBottom: `1px solid ${statusInfo.color}20` }}
+      >
+        {/* Status icon */}
+        {status === "running" || status === "tool_calling" ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: statusInfo.color }} />
+        ) : status === "waiting_input" ? (
           <MessageSquare className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
-        )}
-        {status === "disconnected" && (
+        ) : status === "waiting" ? (
+          <Clock className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
+        ) : status === "compacting" ? (
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" style={{ color: statusInfo.color }} />
+        ) : status === "idle" ? (
+          <Coffee className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
+        ) : status === "error" ? (
+          <AlertTriangle className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
+        ) : status === "disconnected" ? (
           <WifiOff className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
+        ) : (
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: statusInfo.color }} />
+        )}
+        <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
+          {statusInfo.label}
+        </span>
+        {/* Sleep countdown timer */}
+        {isWaiting && sleepRemaining != null && (
+          <span className="text-[10px] flex items-center gap-1" style={{ color: statusInfo.color }}>
+            <Clock className="w-2.5 h-2.5" />
+            {formatSleepTime(sleepRemaining)}
+          </span>
+        )}
+        {/* Show long-running indicator or current tool */}
+        {!isWaiting && longRunningTool && (
+          <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+            <Clock className="w-2.5 h-2.5" />
+            Long task
+          </span>
+        )}
+        {!isWaiting && isToolCalling && toolDisplay && !longRunningTool && (
+          <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+            <Wrench className="w-2.5 h-2.5" />
+            {toolDisplay}
+          </span>
         )}
       </div>
 
@@ -240,7 +265,11 @@ export function AgentNodeCard({
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-white truncate leading-tight">{displayName}</h3>
-            <p className="text-[10px] text-zinc-500">{model ? formatModelName(model) : agentId}</p>
+            <p className="text-[10px] text-zinc-500">
+              {command?.startsWith("isaac") ? "isaac" : command?.startsWith("claude") ? "claude" : null}
+              {command?.startsWith("isaac") || command?.startsWith("claude") ? " · " : ""}
+              {model ? formatModelName(model) : agentId}
+            </p>
           </div>
         </div>
 
@@ -257,7 +286,7 @@ export function AgentNodeCard({
         )}
 
         {/* Repo, Branch & Tokens */}
-        {(dirName || gitBranch || (tokens != null && tokens > 0)) && (
+        {(dirName || gitBranch || (tokens != null && tokens > 0) || (totalTokens != null && totalTokens > 0)) && (
           <div className="mt-2 space-y-1">
             {dirName && (
               <div className="flex items-center gap-1.5">
@@ -274,7 +303,13 @@ export function AgentNodeCard({
             {tokens != null && tokens > 0 && (
               <div className="flex items-center gap-1.5">
                 <Zap className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
-                <span className="text-[11px] text-zinc-400 font-mono">{formatTokens(tokens)}</span>
+                <span className="text-[11px] text-zinc-400 font-mono">{formatTokens(tokens)} <span className="text-zinc-500">session</span></span>
+              </div>
+            )}
+            {totalTokens != null && totalTokens > 0 && totalTokens !== tokens && (
+              <div className="flex items-center gap-1.5">
+                <Flame className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
+                <span className="text-[11px] text-zinc-500 font-mono">{formatTokens(totalTokens)} <span className="text-zinc-600">all</span></span>
               </div>
             )}
           </div>

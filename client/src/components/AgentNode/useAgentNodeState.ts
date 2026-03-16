@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useStore, AgentSession } from "../../stores/useStore";
 import type { ForkDialogResult } from "../ForkDialog";
+import { deleteSessionWithCleanup } from "../../utils/deleteSession";
 
 interface AgentNodeData {
   sessionId: string;
@@ -14,11 +15,12 @@ export function useAgentNodeState(
   nodeData: AgentNodeData,
   session: AgentSession | undefined
 ) {
-  const { removeNode, removeSession, setSelectedNodeId, setSidebarOpen, addNode, addSession } =
+  const { setSelectedNodeId, setSidebarOpen, addNode, addSession, archiveSession, shellTabs: shellTabsMap, deleteShellTabs } =
     useStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -43,14 +45,37 @@ export function useAgentNodeState(
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
+    setDeleteDialogOpen(true);
+    setContextMenu(null);
+  };
+
+  const handleDeleteConfirm = async (cleanup: {
+    deleteLocalBranch: boolean;
+    deleteRemoteBranch: boolean;
+  }) => {
     const sessionId = session?.sessionId || nodeData.sessionId;
-    if (sessionId) {
-      await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
-    }
-    removeSession(id);
-    removeNode(id);
+    if (!sessionId) return;
+
+    await deleteSessionWithCleanup(id, sessionId, cleanup);
     setSelectedNodeId(null);
+    setDeleteDialogOpen(false);
+    setSidebarOpen(false);
+  };
+
+  const handleArchive = async () => {
+    setContextMenu(null);
+
+    // Clean up shell tabs
+    const nodeTabs = shellTabsMap.get(id);
+    if (nodeTabs) {
+      for (const tab of nodeTabs) {
+        fetch(`/api/shell/${tab.shellId}`, { method: "DELETE" }).catch(() => {});
+      }
+      deleteShellTabs(id);
+    }
+
+    await archiveSession(id);
     setSidebarOpen(false);
   };
 
@@ -133,11 +158,15 @@ export function useAgentNodeState(
     contextMenu,
     handleContextMenu,
     handleDelete,
+    handleDeleteConfirm,
     handleFork,
     handleForkConfirm,
+    handleArchive,
     canFork,
     closeContextMenu,
     forkDialogOpen,
     setForkDialogOpen,
+    deleteDialogOpen,
+    setDeleteDialogOpen,
   };
 }

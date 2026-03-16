@@ -12,33 +12,9 @@ const ROOT_DIR = join(__dirname, "..");
 
 const PORT = process.env.PORT || 6969;
 const LAUNCH_CWD = process.cwd();
-const IS_DEV = process.env.NODE_ENV === "development" || process.argv.includes("--dev");
 
 // --- Update source configuration ---
-
-interface UpdateSource {
-  owner: string;
-  repo: string;
-  path: string;
-  ref: string;
-  apiBase: string;
-}
-
-const DEFAULT_UPDATE_SOURCE: UpdateSource = {
-  owner: "databricks-eng",
-  repo: "universe",
-  path: "openui",
-  ref: "master",
-  apiBase: "https://api.github.com",
-};
-
-const FALLBACK_UPDATE_SOURCE: UpdateSource = {
-  owner: "JJ27",
-  repo: "openui",
-  path: "",
-  ref: "stable",
-  apiBase: "https://api.github.com",
-};
+import { DEFAULT_UPDATE_SOURCE, FALLBACK_UPDATE_SOURCE, type UpdateSource } from "./update-sources";
 
 // Read config from ~/.openui/config.json
 function readConfig(): { updateChannel?: string; updateSource?: Partial<UpdateSource> } {
@@ -120,27 +96,20 @@ async function ensurePluginInstalled() {
   const ref = source.ref;
   const pluginPath = source.path ? `${source.path}/claude-code-plugin` : "claude-code-plugin";
 
-  // Try with auth first (for private repos like universe), then public fallback
   const token = await getGitHubToken();
-  const rawBase = token
-    ? `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${ref}/${pluginPath}`
-    : `https://raw.githubusercontent.com/${FALLBACK_UPDATE_SOURCE.owner}/${FALLBACK_UPDATE_SOURCE.repo}/${FALLBACK_UPDATE_SOURCE.ref}/claude-code-plugin`;
+  if (!token) {
+    console.log("\x1b[38;5;208m[plugin]\x1b[0m No GitHub token found — cannot download plugin. Run 'gh auth login' to authenticate.");
+    return;
+  }
+  const rawBase = `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${ref}/${pluginPath}`;
 
   try {
     await $`mkdir -p ${pluginDir}/.claude-plugin ${pluginDir}/hooks`.quiet();
-    if (token) {
-      await Promise.all([
-        $`curl -sL -H ${"Authorization: token " + token} ${rawBase}/.claude-plugin/plugin.json -o ${pluginDir}/.claude-plugin/plugin.json`.quiet(),
-        $`curl -sL -H ${"Authorization: token " + token} ${rawBase}/hooks/hooks.json -o ${pluginDir}/hooks/hooks.json`.quiet(),
-        $`curl -sL -H ${"Authorization: token " + token} ${rawBase}/hooks/status-reporter.sh -o ${pluginDir}/hooks/status-reporter.sh`.quiet(),
-      ]);
-    } else {
-      await Promise.all([
-        $`curl -sL ${rawBase}/.claude-plugin/plugin.json -o ${pluginDir}/.claude-plugin/plugin.json`.quiet(),
-        $`curl -sL ${rawBase}/hooks/hooks.json -o ${pluginDir}/hooks/hooks.json`.quiet(),
-        $`curl -sL ${rawBase}/hooks/status-reporter.sh -o ${pluginDir}/hooks/status-reporter.sh`.quiet(),
-      ]);
-    }
+    await Promise.all([
+      $`curl -sL -H ${"Authorization: token " + token} ${rawBase}/.claude-plugin/plugin.json -o ${pluginDir}/.claude-plugin/plugin.json`.quiet(),
+      $`curl -sL -H ${"Authorization: token " + token} ${rawBase}/hooks/hooks.json -o ${pluginDir}/hooks/hooks.json`.quiet(),
+      $`curl -sL -H ${"Authorization: token " + token} ${rawBase}/hooks/status-reporter.sh -o ${pluginDir}/hooks/status-reporter.sh`.quiet(),
+    ]);
     await $`chmod +x ${pluginDir}/hooks/status-reporter.sh`.quiet();
     console.log("\x1b[38;5;82m[plugin]\x1b[0m Plugin installed successfully!");
   } catch (e) {
@@ -164,16 +133,16 @@ async function getTreeSha(source: UpdateSource, token: string | null): Promise<s
     });
     if (!res.ok) return null;
 
-    const data = await res.json() as { tree: Array<{ path: string; sha: string }> };
+    const data = await res.json() as { sha: string; tree: Array<{ path: string; sha: string }> };
 
-    if (source.path) {
-      // Universe case: find the openui/ subtree entry
-      const entry = data.tree.find((e: { path: string }) => e.path === source.path);
-      return entry?.sha ?? null;
-    } else {
-      // Standalone repo: the root tree SHA is the response sha
-      return (data as any).sha ?? null;
+    if (source.path === ".") {
+      // Root of repo — use the tree SHA directly
+      return data.sha ?? null;
     }
+
+    // Find the subtree entry (e.g., openui/ in universe)
+    const entry = data.tree.find((e: { path: string }) => e.path === source.path);
+    return entry?.sha ?? null;
   } catch {
     return null;
   }
@@ -186,15 +155,26 @@ async function downloadUpdate(source: UpdateSource, token: string | null): Promi
       ? `https://${token}@github.com/${source.owner}/${source.repo}.git`
       : `https://github.com/${source.owner}/${source.repo}.git`;
 
-    if (source.path) {
-      // Universe case: sparse clone only the openui/ directory
+    const isSubdir = source.path !== ".";
+
+    if (isSubdir) {
+      // Sparse clone only the target directory (e.g., openui/ from universe)
       await $`git clone --filter=blob:none --sparse --depth=1 --branch ${source.ref} ${repoUrl} ${tmp}`.quiet();
       await $`git -C ${tmp} sparse-checkout set ${source.path}/`.quiet();
-      await $`rsync -a --delete ${tmp}/${source.path}/ ${ROOT_DIR}/`.quiet();
     } else {
-      // Standalone repo: full shallow clone (repo is small)
+      // Full shallow clone (e.g., JJ27/openui where the repo IS the project)
       await $`git clone --depth=1 --branch ${source.ref} ${repoUrl} ${tmp}`.quiet();
-      await $`rsync -a --delete --exclude='.git' ${tmp}/ ${ROOT_DIR}/`.quiet();
+    }
+
+    // Check if .git exists before rsync so we can verify it survives
+    const hadGit = existsSync(join(ROOT_DIR, ".git"));
+
+    const srcDir = isSubdir ? `${tmp}/${source.path}/` : `${tmp}/`;
+    await $`rsync -a --delete --exclude='.git' --exclude='node_modules' --exclude='client/node_modules' --exclude='client/dist' --exclude='client/bun.lock' --exclude='bun.lock' --exclude='bin/update-sources.ts' ${srcDir} ${ROOT_DIR}/`.quiet();
+
+    // Safety check: verify .git wasn't accidentally deleted
+    if (hadGit && !existsSync(join(ROOT_DIR, ".git"))) {
+      console.error(`\x1b[38;5;196m[update]\x1b[0m CRITICAL: .git directory was deleted during update! This is a bug.`);
     }
 
     return true;
@@ -230,6 +210,35 @@ async function rebuildClient() {
   }
 }
 
+async function tryUpdateFromSource(
+  source: UpdateSource,
+  token: string | null,
+  treeShaFile: string,
+  label: string
+): Promise<boolean> {
+  const treeSha = await getTreeSha(source, token);
+  if (!treeSha) return false;
+
+  // Compare with stored SHA
+  const lastSha = existsSync(treeShaFile)
+    ? readFileSync(treeShaFile, "utf8").trim()
+    : "";
+
+  if (treeSha === lastSha) return true; // Already up to date
+
+  console.log(`\x1b[38;5;141m[update]\x1b[0m Update available, downloading from ${label}...`);
+
+  const success = await downloadUpdate(source, token);
+  if (success) {
+    console.log(`\x1b[38;5;82m[update]\x1b[0m Files updated!`);
+    const rebuilt = await rebuildClient();
+    if (rebuilt) {
+      await Bun.write(treeShaFile, treeSha);
+    }
+  }
+  return true; // Source was reachable even if download/build failed
+}
+
 async function autoUpdateFromApi() {
   if (process.argv.includes("--no-update")) return;
 
@@ -240,38 +249,20 @@ async function autoUpdateFromApi() {
   const token = await getGitHubToken();
   const source = getUpdateSource();
 
-  // Try primary source (universe — requires auth)
-  let treeSha = await getTreeSha(source, token);
-  let activeSource = source;
+  // Try primary source (universe)
+  const primaryOk = await tryUpdateFromSource(source, token, treeShaFile, `${source.owner}/${source.repo}`);
+  if (primaryOk) return;
 
-  if (!treeSha && source !== FALLBACK_UPDATE_SOURCE) {
-    // Fall back to public repo (no auth needed)
-    console.log(`\x1b[38;5;245m[update]\x1b[0m Primary source unavailable, trying fallback...`);
-    treeSha = await getTreeSha(FALLBACK_UPDATE_SOURCE, null);
-    activeSource = FALLBACK_UPDATE_SOURCE;
+  // Primary failed — try fallback if configured
+  if (FALLBACK_UPDATE_SOURCE) {
+    console.log(`\x1b[38;5;245m[update]\x1b[0m Primary source unavailable, trying public fallback...`);
+    const fallbackOk = await tryUpdateFromSource(FALLBACK_UPDATE_SOURCE, null, treeShaFile, `${FALLBACK_UPDATE_SOURCE.owner}/${FALLBACK_UPDATE_SOURCE.repo}`);
+    if (fallbackOk) return;
   }
 
-  if (!treeSha) {
-    // Both sources failed — skip silently (offline, etc.)
-    return;
-  }
-
-  // Compare with stored SHA
-  const lastSha = existsSync(treeShaFile)
-    ? readFileSync(treeShaFile, "utf8").trim()
-    : "";
-
-  if (treeSha === lastSha) return; // No update needed
-
-  console.log(`\x1b[38;5;141m[update]\x1b[0m Update available, downloading from ${activeSource.owner}/${activeSource.repo}...`);
-
-  const success = await downloadUpdate(activeSource, activeSource === source ? token : null);
-  if (success) {
-    console.log(`\x1b[38;5;82m[update]\x1b[0m Files updated!`);
-    const rebuilt = await rebuildClient();
-    if (rebuilt) {
-      await Bun.write(treeShaFile, treeSha);
-    }
+  // All sources failed
+  if (!token) {
+    console.log(`\x1b[38;5;208m[update]\x1b[0m No GitHub token — skipping update check. Run 'gh auth login' to enable auto-updates.`);
   }
 }
 
@@ -283,6 +274,8 @@ async function autoUpdateFromGit() {
   if (!existsSync(gitDir)) return; // Not a standalone git clone
 
   // Check if this is a nested repo (universe) — skip git-based update
+  // In universe, ROOT_DIR/.git won't exist (it's a subdirectory), so this check is redundant
+  // but kept for clarity
   try {
     const parentGit = await $`git -C ${join(ROOT_DIR, "..")} rev-parse --git-dir`.text().catch(() => "");
     if (parentGit.trim()) return; // Nested in a larger repo — use API updater only
@@ -394,10 +387,12 @@ if (!existsSync(clientDistPath)) {
 }
 
 // Start the server with LAUNCH_CWD env var
-// In production mode, suppress server output
+// In production mode, OPENUI_QUIET suppresses verbose debug logs but high-level logs still show.
+// In dev mode (--dev), all logs are visible.
+const IS_DEV = process.env.NODE_ENV === "development" || process.argv.includes("--dev");
 const server = Bun.spawn(["bun", "run", "server/index.ts"], {
   cwd: ROOT_DIR,
-  stdio: IS_DEV ? ["inherit", "inherit", "inherit"] : ["inherit", "ignore", "ignore"],
+  stdio: ["inherit", "inherit", "inherit"],
   env: { ...process.env, PORT: String(PORT), LAUNCH_CWD, OPENUI_QUIET: IS_DEV ? "" : "1" }
 });
 

@@ -1,4 +1,5 @@
-import { useEffect, useCallback, useRef, useMemo } from "react";
+import { useEffect, useCallback, useRef, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ReactFlow,
   Background,
@@ -8,11 +9,13 @@ import {
   ReactFlowProvider,
   NodeChange,
   useReactFlow,
+  Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Plus } from "lucide-react";
 
 import { useStore } from "./stores/useStore";
+import { TerminalPoolProvider } from "./contexts/TerminalPoolContext";
 import { AgentNode } from "./components/AgentNode/index";
 import { Sidebar } from "./components/Sidebar";
 import { NewSessionModal } from "./components/NewSessionModal";
@@ -26,12 +29,55 @@ const nodeTypes = {
   agent: AgentNode,
 };
 
+function ToastContainer() {
+  const toasts = useStore((s) => s.toasts);
+  const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    // Start fade-out 500ms before removal (at 4000ms, removal at 4500ms)
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const toast of toasts) {
+      if (!fadingOut.has(toast.id)) {
+        const timer = setTimeout(() => {
+          setFadingOut((prev) => new Set(prev).add(toast.id));
+        }, 4000);
+        timers.push(timer);
+      }
+    }
+    return () => timers.forEach(clearTimeout);
+  }, [toasts, fadingOut]);
+
+  if (toasts.length === 0) return null;
+
+  return createPortal(
+    <div className="fixed top-4 right-4 z-[99999] flex flex-col gap-2">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          onClick={() => {
+            useStore.getState().setSelectedNodeId(toast.nodeId);
+            useStore.getState().setSidebarOpen(true);
+            useStore.getState().removeToast(toast.id);
+          }}
+          className={`px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium shadow-lg cursor-pointer transition-opacity duration-500 ${
+            fadingOut.has(toast.id) ? "opacity-0" : "opacity-100"
+          }`}
+        >
+          {toast.message}
+        </div>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
 function AppContent() {
   const {
     nodes: storeNodes,
     setNodes: setStoreNodes,
     setAgents,
     setLaunchCwd,
+    setIsRemote,
     setSelectedNodeId,
     setSidebarOpen,
     selectedNodeId,
@@ -50,18 +96,71 @@ function AppContent() {
     activeCanvasId,
     setCanvases,
     setActiveCanvasId,
+    sidebarWidth,
   } = useStore();
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const reactFlowInstance = useReactFlow();
   const positionUpdateTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasRestoredRef = useRef(false);
+  const canvasSelectionRef = useRef<Map<string, string>>(new Map());
+  const canvasViewportRef = useRef<Map<string, Viewport>>(new Map());
+  const prevCanvasIdRef = useRef<string | null>(null);
+  const activeCanvasIdRef = useRef(activeCanvasId);
+  activeCanvasIdRef.current = activeCanvasId;
 
   // Filter nodes to show only those belonging to the active canvas
   const activeCanvasNodes = useMemo(() => {
     if (!activeCanvasId) return nodes;
     return nodes.filter(n => n.data?.canvasId === activeCanvasId);
   }, [nodes, activeCanvasId]);
+
+  // Cache and restore sidebar selection + viewport per canvas
+  useEffect(() => {
+    if (!activeCanvasId) return;
+    const prevCanvasId = prevCanvasIdRef.current;
+    prevCanvasIdRef.current = activeCanvasId;
+
+    // Save state for the canvas we're leaving
+    if (prevCanvasId && prevCanvasId !== activeCanvasId) {
+      if (selectedNodeId) {
+        canvasSelectionRef.current.set(prevCanvasId, selectedNodeId);
+      }
+      // Save viewport (pan/zoom) for the canvas we're leaving
+      canvasViewportRef.current.set(prevCanvasId, reactFlowInstance.getViewport());
+    }
+
+    // Check if selected node belongs to the new canvas
+    const selectedNode = selectedNodeId
+      ? nodes.find(n => n.id === selectedNodeId)
+      : null;
+    const nodeOnTarget = selectedNode && (selectedNode.data as any)?.canvasId === activeCanvasId;
+
+    if (!nodeOnTarget) {
+      // Restore previous selection for this canvas
+      const cachedNodeId = canvasSelectionRef.current.get(activeCanvasId);
+      if (cachedNodeId && nodes.some(n => n.id === cachedNodeId)) {
+        setSelectedNodeId(cachedNodeId);
+        setSidebarOpen(true);
+      } else {
+        setSelectedNodeId(null);
+        setSidebarOpen(false);
+      }
+    }
+
+    // Restore viewport for the target canvas (after a tick so nodes are rendered)
+    const savedViewport = canvasViewportRef.current.get(activeCanvasId);
+    if (savedViewport) {
+      requestAnimationFrame(() => {
+        reactFlowInstance.setViewport(savedViewport, { duration: 0 });
+      });
+    } else if (prevCanvasId && prevCanvasId !== activeCanvasId) {
+      // First time visiting this canvas - fit view to its nodes
+      requestAnimationFrame(() => {
+        reactFlowInstance.fitView({ padding: 0.2, duration: 200 });
+      });
+    }
+  }, [activeCanvasId]);
 
   // Sync nodes with store
   useEffect(() => {
@@ -80,6 +179,7 @@ function AppContent() {
       .then((res) => res.json())
       .then((config) => {
         setLaunchCwd(config.launchCwd);
+        if (config.isRemote) setIsRemote(config.isRemote);
       })
       .catch(console.error);
 
@@ -87,7 +187,7 @@ function AppContent() {
       .then((res) => res.json())
       .then((agents) => setAgents(agents))
       .catch(console.error);
-  }, [setAgents, setLaunchCwd]);
+  }, [setAgents, setLaunchCwd, setIsRemote]);
 
   // Load canvases on mount (with migration if needed)
   useEffect(() => {
@@ -137,20 +237,21 @@ function AppContent() {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isMod = e.metaKey || e.ctrlKey;
-      const agentNodeIds = getAgentNodeIds();
       const isInInput = () => {
         const target = e.target as HTMLElement;
         return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
       };
 
-      // Alt + 1-9 for agents on current canvas (works from terminal too)
+      const isMod = e.metaKey || e.ctrlKey;
+      const agentNodeIds = getAgentNodeIds();
+
+      // Alt + 1-9 for agents on current canvas
       const digitMatch = e.altKey && !e.shiftKey && !isMod && e.code?.match(/^Digit(\d)$/);
       if (digitMatch) {
         if (agentNodeIds.length > 0) {
           e.preventDefault();
           const index = parseInt(digitMatch[1]) - 1;
-          if (index < agentNodeIds.length) {
+          if (index >= 0 && index < agentNodeIds.length) {
             setSelectedNodeId(agentNodeIds[index]);
             setSidebarOpen(true);
           }
@@ -208,7 +309,7 @@ function AppContent() {
         return;
       }
 
-      // Escape to close sidebar (skip if a dialog is open or inside terminal/input)
+      // Escape to close sidebar
       const hasOpenDialog = document.querySelector("[data-modal-overlay]");
       if (e.key === "Escape" && sidebarOpen && !isInInput() && !hasOpenDialog) {
         e.preventDefault();
@@ -217,13 +318,18 @@ function AppContent() {
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeCanvasNodes, selectedNodeId, sidebarOpen, setSelectedNodeId, setSidebarOpen]);
 
   // Keyboard shortcuts for canvas switching
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const isInInput = () => {
+        const target = e.target as HTMLElement;
+        return target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+      };
+
       const isMod = e.metaKey || e.ctrlKey;
 
       // Cmd/Ctrl + K: Open conversation search (works even from inputs)
@@ -231,6 +337,11 @@ function AppContent() {
         e.preventDefault();
         // Toggle the search modal via a custom event
         window.dispatchEvent(new CustomEvent("openui:toggle-search"));
+        return;
+      }
+
+      // Skip if typing in input/textarea for remaining shortcuts
+      if (isInInput()) {
         return;
       }
 
@@ -242,7 +353,7 @@ function AppContent() {
       if (shiftDigitMatch) {
         e.preventDefault();
         const index = parseInt(shiftDigitMatch[1]) - 1;
-        if (index < canvases.length) {
+        if (index >= 0 && index < canvases.length) {
           setActiveCanvasId(canvases[index].id);
         }
         return;
@@ -270,9 +381,37 @@ function AppContent() {
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [setActiveCanvasId]);
+
+  // Notify when any agent transitions to waiting_input (only if enabled in settings)
+  useEffect(() => {
+    const prevStatuses = new Map<string, string>();
+    // Seed with current statuses so we only notify on future transitions
+    for (const [nodeId, session] of useStore.getState().sessions) {
+      prevStatuses.set(nodeId, session.status);
+    }
+    const unsub = useStore.subscribe((state) => {
+      if (!state.notificationsEnabled) return;
+      for (const [nodeId, session] of state.sessions) {
+        const prev = prevStatuses.get(nodeId);
+        prevStatuses.set(nodeId, session.status);
+        if (session.status === "waiting_input" && prev !== undefined && prev !== "waiting_input") {
+          const name = session.customName || session.agentName || "Agent";
+          // In-page toast notification (React-managed)
+          const toastId = `toast-${Date.now()}`;
+          useStore.getState().addToast({ id: toastId, message: `${name} needs input`, nodeId });
+          setTimeout(() => useStore.getState().removeToast(toastId), 4500);
+          // Native notification
+          if ("Notification" in window && Notification.permission === "granted") {
+            try { new Notification(`${name} needs input`, { body: "An agent is waiting for your input.", requireInteraction: true }); } catch {}
+          }
+        }
+      }
+    });
+    return unsub;
+  }, []);
 
   // Poll for status updates every second to catch any missed WebSocket messages
   useEffect(() => {
@@ -280,6 +419,7 @@ function AppContent() {
       try {
         const res = await fetch("/api/sessions");
         if (res.ok) {
+          useStore.getState().setConnected(true);
           const sessionsData = await res.json();
           const currentSessions = useStore.getState().sessions;
           for (const sessionData of sessionsData) {
@@ -296,11 +436,23 @@ function AppContent() {
                 if (sessionData.tokens != null && existing.tokens !== sessionData.tokens) {
                   updates.tokens = sessionData.tokens;
                 }
+                if ((existing.totalTokens ?? null) !== (sessionData.totalTokens ?? null)) {
+                  updates.totalTokens = sessionData.totalTokens ?? undefined;
+                }
+                if ((existing.contextTokens ?? null) !== (sessionData.contextTokens ?? null)) {
+                  updates.contextTokens = sessionData.contextTokens ?? undefined;
+                }
                 if (sessionData.model && existing.model !== sessionData.model) {
                   updates.model = sessionData.model;
                 }
                 if ((existing.sleepEndTime || undefined) !== (sessionData.sleepEndTime || undefined)) {
                   updates.sleepEndTime = sessionData.sleepEndTime;
+                }
+                if (sessionData.cwd && existing.cwd !== sessionData.cwd) {
+                  updates.cwd = sessionData.cwd;
+                }
+                if (sessionData.gitBranch && existing.gitBranch !== sessionData.gitBranch) {
+                  updates.gitBranch = sessionData.gitBranch;
                 }
                 if (Object.keys(updates).length > 0) {
                   updateSession(sessionData.nodeId, updates);
@@ -308,9 +460,11 @@ function AppContent() {
               }
             }
           }
+        } else {
+          useStore.getState().setConnected(false);
         }
       } catch (e) {
-        // Ignore errors
+        useStore.getState().setConnected(false);
       }
     };
 
@@ -456,7 +610,7 @@ function AppContent() {
               ticketTitle: session.ticketTitle,
               icon: agent?.icon || "cpu",
               sessionId: session.sessionId,
-              canvasId: saved?.canvasId || activeCanvasId,
+              canvasId: saved?.canvasId || activeCanvasIdRef.current,
             },
           });
 
@@ -495,7 +649,16 @@ function AppContent() {
         }, 50); // Wait for ReactFlow to process new nodes
       })
       .catch(console.error);
-  }, [showArchived, agents, addSession, setNodes, setStoreNodes, activeCanvasId, reactFlowInstance]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showArchived, agents, addSession, setNodes, setStoreNodes, reactFlowInstance]);
+
+  // Re-fit view when sidebar opens/closes or panel is resized
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      reactFlowInstance.fitView({ padding: 0.2, duration: sidebarOpen ? 0 : 300 });
+    }, sidebarOpen ? 0 : 250);
+    return () => clearTimeout(timer);
+  }, [sidebarOpen, sidebarWidth, reactFlowInstance]);
 
   // Helper to save all positions - accepts nodes directly to avoid sync issues
   const saveAllPositions = useCallback((nodesToSave?: typeof nodes) => {
@@ -577,7 +740,11 @@ function AppContent() {
       <AuthBanner />
       <CanvasTabs />
 
-      <div data-tour="canvas-area" className="flex-1 relative">
+      <div
+        data-tour="canvas-area"
+        className="flex-1 relative"
+        style={{ marginRight: sidebarOpen ? `${sidebarWidth}vw` : 0 }}
+      >
         <ReactFlow
           nodes={activeCanvasNodes}
           edges={[]}
@@ -643,6 +810,7 @@ function AppContent() {
       />
 
       <OnboardingTour />
+      <ToastContainer />
     </div>
   );
 }
@@ -650,7 +818,9 @@ function AppContent() {
 function App() {
   return (
     <ReactFlowProvider>
-      <AppContent />
+      <TerminalPoolProvider maxSize={6}>
+        <AppContent />
+      </TerminalPoolProvider>
     </ReactFlowProvider>
   );
 }

@@ -15,8 +15,30 @@ const QUIET = !!process.env.OPENUI_QUIET;
 // Conditionally log only in dev mode
 const log = QUIET ? () => {} : console.log.bind(console);
 
+const MAX_HISTORY_BYTES = 512 * 1024;
+
+function buildReplayHistory(outputBuffer: string[]): string {
+  let history = "";
+  let totalBytes = 0;
+
+  for (let i = outputBuffer.length - 1; i >= 0; i--) {
+    const chunk = outputBuffer[i];
+    if (totalBytes + chunk.length > MAX_HISTORY_BYTES) {
+      break;
+    }
+    history = chunk + history;
+    totalBytes += chunk.length;
+  }
+
+  if (history.length > 0) {
+    history = "\x1b[0m" + history;
+  }
+
+  return history;
+}
+
 // Middleware
-app.use("*", cors());
+app.use("*", cors({ origin: ["http://localhost:6968", "http://localhost:6969"] }));
 
 // API Routes
 app.route("/api", apiRoutes);
@@ -51,7 +73,8 @@ Bun.serve<WebSocketData>({
       const session = sessions.get(sessionId);
       if (!session) return new Response("Session not found", { status: 404 });
 
-      const upgraded = server.upgrade(req, { data: { sessionId } });
+      const lastSeq = Number(url.searchParams.get("lastSeq")) || 0;
+      const upgraded = server.upgrade(req, { data: { sessionId, lastSeq } });
       if (upgraded) return undefined;
       return new Response("WebSocket upgrade failed", { status: 400 });
     }
@@ -60,7 +83,7 @@ Bun.serve<WebSocketData>({
   },
   websocket: {
     open(ws) {
-      const { sessionId } = ws.data;
+      const { sessionId, lastSeq } = ws.data;
       const session = sessions.get(sessionId);
 
       if (!session) {
@@ -68,35 +91,45 @@ Bun.serve<WebSocketData>({
         return;
       }
 
-      log(`\x1b[38;5;245m[ws]\x1b[0m Connected to ${sessionId}`);
+      log(`\x1b[38;5;245m[ws]\x1b[0m Connected to ${sessionId} (lastSeq=${lastSeq}, serverSeq=${session.outputSeq})`);
       session.clients.add(ws);
 
-      if (session.outputBuffer.length > 0 && !session.isRestored && session.pty) {
-        // Cap history to avoid blocking the event loop with huge JSON.stringify
-        // Terminal output full of ANSI escapes can expand 3-5x during JSON encoding
-        const MAX_HISTORY_BYTES = 512 * 1024; // 512KB raw → ~1-2MB JSON
-        let history = "";
-        let totalBytes = 0;
-        // Walk backwards to get the most recent output first
-        for (let i = session.outputBuffer.length - 1; i >= 0; i--) {
-          const chunk = session.outputBuffer[i];
-          if (totalBytes + chunk.length > MAX_HISTORY_BYTES) {
-            // Take partial from this chunk (the tail end)
-            const remaining = MAX_HISTORY_BYTES - totalBytes;
-            if (remaining > 0) {
-              history = chunk.slice(-remaining) + history;
-            }
-            break;
-          }
-          history = chunk + history;
-          totalBytes += chunk.length;
-        }
-        ws.send(JSON.stringify({ type: "output", data: history }));
-      } else if (session.isRestored || !session.pty) {
+      if (session.isRestored || !session.pty) {
         ws.send(JSON.stringify({
           type: "output",
-          data: "\x1b[38;5;245mSession was disconnected.\r\nClick \"Spawn Fresh\" to start a new session.\x1b[0m\r\n"
+          data: "\x1b[38;5;245mSession was disconnected.\r\nClick \"Spawn Fresh\" to start a new session.\x1b[0m\r\n",
+          seq: session.outputSeq,
         }));
+      } else if (lastSeq > 0 && lastSeq === session.outputSeq) {
+        // Client cache is up to date — skip buffer replay
+        log(`\x1b[38;5;245m[ws]\x1b[0m Cache hit for ${sessionId}, skipping buffer`);
+        ws.send(JSON.stringify({ type: "output", data: "", seq: session.outputSeq }));
+      } else if (lastSeq > 0 && session.outputBuffer.length > 0) {
+        // Client has cache — always send as isDelta to preserve scrollback.
+        // The client will append (not clear) when it sees isDelta: true.
+        const missedChunks = session.outputSeq - lastSeq;
+        if (missedChunks > 0 && missedChunks <= session.outputBuffer.length) {
+          // Exact delta — send only the chunks the client missed
+          const startIndex = session.outputBuffer.length - missedChunks;
+          let delta = "";
+          for (let i = startIndex; i < session.outputBuffer.length; i++) {
+            delta += session.outputBuffer[i];
+          }
+          log(`\x1b[38;5;245m[ws]\x1b[0m Delta replay for ${sessionId}: ${missedChunks} chunks`);
+          ws.send(JSON.stringify({ type: "output", data: delta, seq: session.outputSeq, isDelta: true }));
+        } else {
+          // Can't compute an exact delta (buffer overflow, seq reset after server
+          // restart, or negative missedChunks). Replaying as a delta would append
+          // recent output onto a stale client snapshot and corrupt the visible
+          // history, so force a clean recent-history replay instead.
+          const history = buildReplayHistory(session.outputBuffer);
+          log(`\x1b[38;5;245m[ws]\x1b[0m Stale cache fallback for ${sessionId}: replaying recent history (missed=${missedChunks}, bufLen=${session.outputBuffer.length})`);
+          ws.send(JSON.stringify({ type: "output", data: history, seq: session.outputSeq }));
+        }
+      } else if (session.outputBuffer.length > 0) {
+        // No cache (lastSeq=0) — full buffer replay for first-time connections
+        const history = buildReplayHistory(session.outputBuffer);
+        ws.send(JSON.stringify({ type: "output", data: history, seq: session.outputSeq }));
       }
 
       ws.send(JSON.stringify({

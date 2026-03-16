@@ -1,11 +1,11 @@
 import { Hono } from "hono";
-import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND, resolveResumeCwd } from "../services/sessionManager";
+import type { Agent, Session } from "../types";
+import { sessions, createSession, deleteSession, createShellSession, injectPluginDir, broadcastToSession, attachOutputHandler, getGitBranch, DEFAULT_CLAUDE_COMMAND, createWorktreeForBranch } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
-import { getTokensForSession } from "../services/costCache";
+import { getTokensForSession, getContextTokens, invalidateContextCache, getTotalTokensForNode } from "../services/costCache";
 import { spawnSync } from "bun";
-import { join } from "path";
+import { join, dirname } from "path";
 import { homedir } from "os";
 import { existsSync, readFileSync } from "fs";
 
@@ -16,8 +16,10 @@ const logError = QUIET ? () => {} : console.error.bind(console);
 
 export const apiRoutes = new Hono();
 
+const IS_REMOTE = !!process.env.SSH_CONNECTION;
+
 apiRoutes.get("/config", (c) => {
-  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir(), homeDir: homedir() });
+  return c.json({ launchCwd: LAUNCH_CWD, dataDir: getDataDir(), homeDir: homedir(), isRemote: IS_REMOTE });
 });
 
 // Get auto-resume configuration and status
@@ -112,6 +114,10 @@ apiRoutes.get("/agents", (c) => {
   return c.json(agents);
 });
 
+apiRoutes.get("/cli-info", (c) => {
+  return c.json({ hasIsaac: DEFAULT_CLAUDE_COMMAND.startsWith("isaac") });
+});
+
 apiRoutes.get("/sessions", (c) => {
   const showArchived = c.req.query("archived") === "true";
 
@@ -143,7 +149,7 @@ apiRoutes.get("/sessions", (c) => {
 
   // For active sessions, get from sessions Map
   const sessionList = Array.from(sessions.entries())
-    .filter(([, session]) => !session.archived)
+    .filter(([, session]) => !session.archived && session.agentId !== "shell")
     .map(([id, session]) => {
       // Compute effective status: if stuck in waiting_input but user already approved
       // a sleep command, flip to "waiting" (no hook events arrive during the sleep).
@@ -182,6 +188,8 @@ apiRoutes.get("/sessions", (c) => {
         canvasId: session.canvasId, // Canvas/tab this agent belongs to
         longRunningTool: session.longRunningTool || false,
         tokens: getTokensForSession(session.claudeSessionId) ?? session.tokens,
+        totalTokens: getTotalTokensForNode(session.claudeSessionId, session.claudeSessionHistory),
+        contextTokens: getContextTokens(session.claudeSessionId),
         model: session.model,
         sleepEndTime: session.sleepEndTime,
       };
@@ -258,28 +266,36 @@ apiRoutes.post("/sessions", async (c) => {
     prNumber,
   } = body;
 
-  const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  let rawCwd = cwd ? cwd.replace(/^~(?=$|\/)/, homedir()) : LAUNCH_CWD;
+  // Input validation to prevent shell injection
+  const ALLOWED_COMMAND_PREFIXES = ["isaac claude", "claude", "llm agent claude", "opencode", "ralph"];
+  if (command && !ALLOWED_COMMAND_PREFIXES.some((p: string) => command.startsWith(p))) {
+    return c.json({ error: "Invalid command: must start with a known agent binary" }, 400);
+  }
+  if (branchName && !/^[\w.\-\/]+$/.test(branchName)) {
+    return c.json({ error: "Invalid branch name" }, 400);
+  }
+  if (prNumber && !/^\d+$/.test(String(prNumber))) {
+    return c.json({ error: "Invalid PR number" }, 400);
+  }
 
-  // When resuming a session, resolve the correct cwd.
-  // First check state.json, then verify against Claude's JSONL to handle cwd drift.
+  const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  let workingDir = cwd || LAUNCH_CWD;
+
+  // When resuming a session, look up the original cwd from state.json
+  // (e.g., the session may have been in a worktree that projectPath doesn't capture)
   const resumeMatch = command?.match(/--resume\s+([\w-]+)/);
   if (resumeMatch) {
     const claudeSessionId = resumeMatch[1];
     const state = loadState();
-    const matchingNode = state.nodes.find(n =>
+    const matchingNode = state.nodes.find((n: any) =>
       n.claudeSessionId === claudeSessionId ||
       n.command?.includes(`--resume ${claudeSessionId}`)
     );
     if (matchingNode?.cwd) {
       log(`\x1b[38;5;141m[session]\x1b[0m Resume: using archived cwd ${matchingNode.cwd}`);
-      rawCwd = matchingNode.cwd;
+      workingDir = matchingNode.cwd;
     }
-    // Verify against Claude's session JSONL (cwd in state.json may have drifted)
-    rawCwd = resolveResumeCwd(rawCwd, claudeSessionId);
   }
-
-  const workingDir = rawCwd;
 
   try {
     const result = await createSession({
@@ -341,6 +357,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       createdAt: archivedNode.createdAt,
       clients: new Set(),
       outputBuffer: buffer,
+      outputSeq: 0,
       status: "disconnected",
       lastOutputTime: 0,
       lastInputTime: 0,
@@ -351,6 +368,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       nodeId: archivedNode.nodeId,
       isRestored: true,
       claudeSessionId: archivedNode.claudeSessionId,
+      claudeSessionHistory: archivedNode.claudeSessionHistory,
       archived: false,
       canvasId: archivedNode.canvasId,
       ticketId: archivedNode.ticketId,
@@ -390,17 +408,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       session.recentOutputSize = Math.max(0, session.recentOutputSize - 50);
     }, 500);
 
-    ptyProcess.onData((data: string) => {
-      session.outputBuffer.push(data);
-      if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
-        session.outputBuffer.shift();
-      }
-
-      session.lastOutputTime = Date.now();
-      session.recentOutputSize += data.length;
-
-      broadcastToSession(session, { type: "output", data });
-    });
+    attachOutputHandler(session, ptyProcess);
 
     // Build the command with resume flag if we have a Claude session ID
     let finalCommand = injectPluginDir(session.command, session.agentId);
@@ -464,42 +472,49 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   const customName = body.customName || `${parentName} (fork)`;
   const customColor = body.customColor || session.customColor;
 
-  let effectiveCwd = (body.cwd ? body.cwd.replace(/^~(?=$|\/)/, homedir()) : null) || session.cwd;
+  let effectiveCwd = body.cwd || session.cwd;
   let gitBranch = session.gitBranch;
 
-  // Build isaac flags for worktree/branch/PR
+  // Build CLI flags for worktree/branch/PR
+  const isIsaac = session.command.startsWith("isaac ");
   let isaacFlags = "";
   if (body.branchName) {
-    // Check if the branch is already checked out in an existing worktree
-    let existingWorktreePath: string | null = null;
-    try {
-      const wtResult = spawnSync(["git", "worktree", "list", "--porcelain"], {
-        cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
-      });
-      if (wtResult.exitCode === 0) {
-        const blocks = wtResult.stdout.toString().split("\n\n");
-        for (const block of blocks) {
-          if (block.includes(`branch refs/heads/${body.branchName}\n`) || block.endsWith(`branch refs/heads/${body.branchName}`)) {
-            const pathMatch = block.match(/^worktree (.+)$/m);
-            if (pathMatch) {
-              existingWorktreePath = pathMatch[1];
-              break;
-            }
+    if (isIsaac) {
+      // Isaac handles worktree creation via --worktree --branch flags
+      if (body.baseBranch) {
+        try {
+          const branchExists = spawnSync(["git", "rev-parse", "--verify", body.branchName], {
+            cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
+          }).exitCode === 0;
+          if (!branchExists) {
+            log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${body.branchName}" from "${body.baseBranch}"`);
+            spawnSync(["git", "branch", body.branchName, body.baseBranch], {
+              cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
+            });
           }
+        } catch {
+          log(`\x1b[38;5;208m[git]\x1b[0m git not available, skipping branch pre-creation`);
         }
       }
-    } catch {}
-
-    if (existingWorktreePath) {
-      log(`\x1b[38;5;141m[git]\x1b[0m Branch "${body.branchName}" already at ${existingWorktreePath}`);
-      effectiveCwd = existingWorktreePath;
-    } else {
       isaacFlags += ` --worktree --branch "${body.branchName}"`;
+    } else {
+      // Claude CLI doesn't support --worktree; create worktree manually
+      try {
+        const worktreeCwd = createWorktreeForBranch(effectiveCwd, body.branchName, body.baseBranch);
+        if (worktreeCwd) {
+          effectiveCwd = worktreeCwd;
+          log(`\x1b[38;5;141m[git]\x1b[0m Using worktree at ${worktreeCwd} for branch "${body.branchName}"`);
+        }
+      } catch (e) {
+        log(`\x1b[38;5;208m[git]\x1b[0m Failed to create worktree: ${e}`);
+      }
     }
     gitBranch = body.branchName;
   }
   if (body.prNumber) {
-    isaacFlags += ` --worktree --pr ${body.prNumber}`;
+    if (isIsaac) {
+      isaacFlags += ` --pr ${body.prNumber}`;
+    }
     if (!gitBranch) gitBranch = `PR #${body.prNumber}`;
   }
 
@@ -531,6 +546,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     createdAt: new Date().toISOString(),
     clients: new Set() as any,
     outputBuffer: [] as string[],
+    outputSeq: 0,
     status: "running" as const,
     lastOutputTime: Date.now(),
     lastInputTime: 0,
@@ -559,15 +575,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     newSession.recentOutputSize = Math.max(0, newSession.recentOutputSize - 50);
   }, 500);
 
-  ptyProcess.onData((data: string) => {
-    newSession.outputBuffer.push(data);
-    if (newSession.outputBuffer.length > MAX_BUFFER_SIZE) {
-      newSession.outputBuffer.shift();
-    }
-    newSession.lastOutputTime = Date.now();
-    newSession.recentOutputSize += data.length;
-    broadcastToSession(newSession, { type: "output", data });
-  });
+  attachOutputHandler(newSession, ptyProcess);
 
   // Build the fork command: inject plugin-dir, then --resume <id> --fork-session + isaac flags
   let finalCommand = injectPluginDir(session.command, session.agentId);
@@ -638,6 +646,38 @@ apiRoutes.delete("/sessions/:sessionId", (c) => {
   return c.json({ error: "Session not found" }, 404);
 });
 
+// ============ Shell (Raw Terminal) ============
+
+apiRoutes.post("/shell", async (c) => {
+  const { cwd, nodeId } = await c.req.json();
+  if (!cwd) return c.json({ error: "cwd is required" }, 400);
+  if (!nodeId) return c.json({ error: "nodeId is required" }, 400);
+
+  const { shellId } = createShellSession(cwd, nodeId);
+  saveState(sessions);
+  return c.json({ shellId });
+});
+
+apiRoutes.delete("/shell/:shellId", (c) => {
+  const shellId = c.req.param("shellId");
+  const deleted = deleteSession(shellId);
+  if (!deleted) return c.json({ error: "Shell not found" }, 404);
+  saveState(sessions);
+  return c.json({ success: true });
+});
+
+apiRoutes.get("/shells", (c) => {
+  const shellList = Array.from(sessions.entries())
+    .filter(([, session]) => session.agentId === "shell")
+    .map(([id, session]) => ({
+      shellId: id,
+      nodeId: session.nodeId,
+      cwd: session.cwd,
+      createdAt: session.createdAt,
+    }));
+  return c.json(shellList);
+});
+
 // Archive/unarchive session
 apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
   const sessionId = c.req.param("sessionId");
@@ -673,6 +713,155 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
   return c.json({ success: true });
 });
 
+// Get git info for archive cleanup dialog
+apiRoutes.get("/sessions/:sessionId/git-info", (c) => {
+  const sessionId = c.req.param("sessionId");
+
+  // Find session in memory or state.json
+  let cwd: string | null = null;
+  let gitBranch: string | null = null;
+
+  const session = sessions.get(sessionId);
+  if (session) {
+    cwd = session.cwd;
+    gitBranch = session.gitBranch || null;
+  } else {
+    const state = loadState();
+    const node = state.nodes?.find(n => n.sessionId === sessionId);
+    if (node) {
+      cwd = node.cwd;
+      gitBranch = node.gitBranch || null;
+    }
+  }
+
+  if (!cwd) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  // Detect worktree: check if cwd is inside a git worktree
+  let hasWorktree = false;
+  try {
+    const gitDir = spawnSync(["git", "rev-parse", "--git-dir"], {
+      cwd, stdout: "pipe", stderr: "pipe",
+    });
+    const commonDir = spawnSync(["git", "rev-parse", "--git-common-dir"], {
+      cwd, stdout: "pipe", stderr: "pipe",
+    });
+    // In a worktree, git-dir is like /path/.git/worktrees/name, common-dir is /path/.git
+    if (gitDir.exitCode === 0 && commonDir.exitCode === 0) {
+      const gitDirStr = new TextDecoder().decode(gitDir.stdout).trim();
+      const commonDirStr = new TextDecoder().decode(commonDir.stdout).trim();
+      hasWorktree = gitDirStr !== commonDirStr && gitDirStr !== ".git";
+    }
+  } catch {}
+
+  // Detect local branch
+  let localBranch: string | null = null;
+  if (gitBranch) {
+    try {
+      const result = spawnSync(["git", "rev-parse", "--verify", gitBranch], {
+        cwd, stdout: "pipe", stderr: "pipe",
+      });
+      if (result.exitCode === 0) {
+        localBranch = gitBranch;
+      }
+    } catch {}
+  }
+
+  // Detect remote branch
+  let remoteBranch: string | null = null;
+  if (gitBranch) {
+    try {
+      const result = spawnSync(["git", "rev-parse", "--verify", `origin/${gitBranch}`], {
+        cwd, stdout: "pipe", stderr: "pipe",
+      });
+      if (result.exitCode === 0) {
+        remoteBranch = gitBranch;
+      }
+    } catch {}
+  }
+
+  return c.json({ hasWorktree, localBranch, remoteBranch, cwd });
+});
+
+// Cleanup branches before archiving (worktrees are NOT destroyed — Isaac reuses them)
+apiRoutes.post("/sessions/:sessionId/cleanup", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const { deleteLocalBranch, deleteRemoteBranch } = await c.req.json();
+
+  // Find session cwd and branch
+  let cwd: string | null = null;
+  let gitBranch: string | null = null;
+
+  const session = sessions.get(sessionId);
+  if (session) {
+    cwd = session.cwd;
+    gitBranch = session.gitBranch || null;
+  } else {
+    const state = loadState();
+    const node = state.nodes?.find(n => n.sessionId === sessionId);
+    if (node) {
+      cwd = node.cwd;
+      gitBranch = node.gitBranch || null;
+    }
+  }
+
+  if (!cwd) {
+    return c.json({ error: "Session not found" }, 404);
+  }
+
+  const errors: string[] = [];
+
+  // Need to find the main repo dir for branch operations after worktree removal
+  let mainRepoDir = cwd;
+  try {
+    const commonDir = spawnSync(["git", "rev-parse", "--git-common-dir"], {
+      cwd, stdout: "pipe", stderr: "pipe",
+    });
+    const commonDirStr = new TextDecoder().decode(commonDir.stdout).trim();
+    // common-dir is like /path/to/repo/.git — parent is the repo root
+    if (commonDirStr && commonDirStr !== ".git") {
+      mainRepoDir = dirname(commonDirStr);
+    }
+  } catch {}
+
+  // 1. Delete local branch
+  if (deleteLocalBranch && gitBranch) {
+    try {
+      log(`[cleanup] Deleting local branch ${gitBranch}`);
+      const result = spawnSync(["git", "branch", "-D", "--", gitBranch], {
+        cwd: mainRepoDir, stdout: "pipe", stderr: "pipe",
+      });
+      if (result.exitCode !== 0) {
+        const stderr = new TextDecoder().decode(result.stderr).trim();
+        errors.push(`branch delete: ${stderr}`);
+        log(`[cleanup] branch delete failed: ${stderr}`);
+      }
+    } catch (e: any) {
+      errors.push(`branch delete: ${e.message}`);
+    }
+  }
+
+  // 2. Delete remote branch
+  if (deleteRemoteBranch && gitBranch) {
+    try {
+      log(`[cleanup] Deleting remote branch origin/${gitBranch}`);
+      const result = spawnSync(["git", "push", "origin", "--delete", "--", gitBranch], {
+        cwd: mainRepoDir, stdout: "pipe", stderr: "pipe",
+      });
+      if (result.exitCode !== 0) {
+        const stderr = new TextDecoder().decode(result.stderr).trim();
+        errors.push(`remote branch delete: ${stderr}`);
+        log(`[cleanup] remote branch delete failed: ${stderr}`);
+      }
+    } catch (e: any) {
+      errors.push(`remote branch delete: ${e.message}`);
+    }
+  }
+
+  return c.json({ success: errors.length === 0, errors });
+});
+
 // Session context endpoint for plugin hook systemMessage injection
 apiRoutes.get("/sessions/:sessionId/context", (c) => {
   const sessionId = c.req.param("sessionId");
@@ -703,7 +892,7 @@ apiRoutes.post("/status-update", async (c) => {
     return c.json({ error: "status is required" }, 400);
   }
 
-  let session = null;
+  let session: Session | undefined = undefined;
 
   // Primary: Use OpenUI session ID if provided (this is definitive)
   if (openuiSessionId) {
@@ -721,9 +910,20 @@ apiRoutes.post("/status-update", async (c) => {
   }
 
   if (session) {
-    // Always update Claude session ID — Claude may issue a new ID on resume
-    if (claudeSessionId) {
+    // Track Claude session ID changes — Claude issues a new ID on /clear
+    if (claudeSessionId && claudeSessionId !== session.claudeSessionId) {
+      if (session.claudeSessionId) {
+        if (!session.claudeSessionHistory) session.claudeSessionHistory = [];
+        if (!session.claudeSessionHistory.includes(session.claudeSessionId)) {
+          session.claudeSessionHistory.push(session.claudeSessionId);
+        }
+      }
       session.claudeSessionId = claudeSessionId;
+      // Strip --fork-session from command (fork already happened, future resumes should just --resume)
+      if (session.command.includes("--fork-session")) {
+        session.command = session.command.replace(/\s*--fork-session/g, "");
+      }
+      saveState(sessions);
     }
 
     // Update cwd from hook input (isaac may move to a worktree directory)
@@ -913,6 +1113,11 @@ apiRoutes.post("/status-update", async (c) => {
         clearTimeout(session.longRunningTimeout);
         session.longRunningTimeout = undefined;
       }
+    }
+
+    // Invalidate context token cache on Stop (new usage data available) and compacting
+    if ((hookEvent === "Stop" || status === "compacting") && session.claudeSessionId) {
+      invalidateContextCache(session.claudeSessionId);
     }
 
     // Clear compacting timeout when any non-compacting event arrives
@@ -1200,6 +1405,45 @@ function loadConfig(): Record<string, any> {
 function saveConfig(config: Record<string, any>) {
   atomicWriteJson(configPath, config);
 }
+
+// ============ Isaac Usage ============
+
+let usageCache: { data: any; timestamp: number } | null = null;
+const USAGE_CACHE_TTL = 60_000; // 60 seconds
+
+apiRoutes.get("/usage", async (c) => {
+  // Return cached result if fresh
+  if (usageCache && Date.now() - usageCache.timestamp < USAGE_CACHE_TTL) {
+    return c.json(usageCache.data);
+  }
+
+  try {
+    const proc = Bun.spawn(["isaac", "usage", "--days", "1"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env },
+    });
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+
+    // Parse summary lines: "Daily: $X.XX", "Weekly: $X.XX", "Monthly: $X.XX"
+    const daily = output.match(/Daily:\s*\$([\d,.]+)/)?.[1] || null;
+    const weekly = output.match(/Weekly:\s*\$([\d,.]+)/)?.[1] || null;
+    const monthly = output.match(/Monthly:\s*\$([\d,.]+)/)?.[1] || null;
+
+    // Parse daily tokens from the table row (e.g. "17.4M" or "387.1M" or "1.2B")
+    // The table has columns: Date | Day | Cost | Tokens | Sessions | Duration | Models
+    // Match the tokens column value like "17.4M" or "662.9M"
+    const tokensMatch = output.match(/│[^│]+│[^│]+│[^│]+│\s*([\d,.]+[KMB]?)\s*│/);
+    const dailyTokens = tokensMatch?.[1]?.trim() || null;
+
+    const data = { daily, weekly, monthly, dailyTokens };
+    usageCache = { data, timestamp: Date.now() };
+    return c.json(data);
+  } catch (e) {
+    return c.json({ daily: null, weekly: null, monthly: null, dailyTokens: null });
+  }
+});
 
 // GET /api/settings — read all user settings
 apiRoutes.get("/settings", (c) => {

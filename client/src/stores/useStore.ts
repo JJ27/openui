@@ -45,6 +45,10 @@ export interface AgentSession {
   longRunningTool?: boolean;
   // Token usage from cost cache
   tokens?: number;
+  // Cumulative tokens across all sessions (shown when history exists)
+  totalTokens?: number;
+  // Current context window size (from last assistant message usage)
+  contextTokens?: number;
   // Model name (from plugin hook, e.g. "claude-sonnet-4-6")
   model?: string;
   // Sleep timer: epoch ms when sleep ends
@@ -57,6 +61,8 @@ interface AppState {
   // Config
   launchCwd: string;
   setLaunchCwd: (cwd: string) => void;
+  isRemote: boolean;
+  setIsRemote: (isRemote: boolean) => void;
 
   // Agents
   agents: Agent[];
@@ -119,12 +125,36 @@ interface AppState {
   // Pending resume conversation (from search modal → new session modal bridge)
   pendingResumeConversation: any | null;
   setPendingResumeConversation: (conv: any | null) => void;
+
+  // Server connection status
+  connected: boolean;
+  setConnected: (connected: boolean) => void;
+
+  // Sidebar width (shared between Sidebar and App for canvas margin)
+  sidebarWidth: number;
+  setSidebarWidth: (width: number) => void;
+
+  // Notifications (default off)
+  notificationsEnabled: boolean;
+  setNotificationsEnabled: (enabled: boolean) => void;
+
+  // Shell tabs per node (keyed by nodeId)
+  shellTabs: Map<string, { id: string; shellId: string }[]>;
+  setShellTabs: (nodeId: string, tabs: { id: string; shellId: string }[]) => void;
+  deleteShellTabs: (nodeId: string) => void;
+
+  // Toast notifications (React-managed)
+  toasts: Array<{ id: string; message: string; nodeId: string }>;
+  addToast: (toast: { id: string; message: string; nodeId: string }) => void;
+  removeToast: (id: string) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
   // Config
   launchCwd: "",
   setLaunchCwd: (cwd) => set({ launchCwd: cwd }),
+  isRemote: false,
+  setIsRemote: (isRemote) => set({ isRemote }),
 
   // Agents
   agents: [],
@@ -297,6 +327,37 @@ export const useStore = create<AppState>((set) => ({
 
   pendingResumeConversation: null,
   setPendingResumeConversation: (conv) => set({ pendingResumeConversation: conv }),
+
+  connected: true,
+  setConnected: (connected) => set({ connected }),
+
+  sidebarWidth: parseFloat(localStorage.getItem("openui-sidebar-pct") || "30"),
+  setSidebarWidth: (width) => set({ sidebarWidth: width }),
+  notificationsEnabled: localStorage.getItem("openui-notifications") === "true",
+  setNotificationsEnabled: (enabled) => {
+    localStorage.setItem("openui-notifications", String(enabled));
+    set({ notificationsEnabled: enabled });
+  },
+
+  // Shell tabs per node
+  shellTabs: new Map(),
+  setShellTabs: (nodeId, tabs) =>
+    set((state) => {
+      const next = new Map(state.shellTabs);
+      next.set(nodeId, tabs);
+      return { shellTabs: next };
+    }),
+  deleteShellTabs: (nodeId) =>
+    set((state) => {
+      const next = new Map(state.shellTabs);
+      next.delete(nodeId);
+      return { shellTabs: next };
+    }),
+
+  // Toast notifications
+  toasts: [],
+  addToast: (toast) => set((state) => ({ toasts: [...state.toasts, toast] })),
+  removeToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
 
   loadState: async () => {
     const showArchived = useStore.getState().showArchived;

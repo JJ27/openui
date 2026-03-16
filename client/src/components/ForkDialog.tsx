@@ -67,16 +67,6 @@ export function ForkDialog({
   parentCwd,
   onConfirm,
 }: ForkDialogProps) {
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); onClose(); }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [open, onClose]);
-
   // Form state
   const [name, setName] = useState("");
   const [color, setColor] = useState("");
@@ -205,7 +195,6 @@ export function ForkDialog({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             onClick={onClose}
-            data-modal-overlay
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
           />
 
