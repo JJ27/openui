@@ -172,6 +172,10 @@ export function NewSessionModal({
   const [count, setCount] = useState(1);
   const [isCreating, setIsCreating] = useState(false);
 
+  // CLI mode: "isaac" or "claude" (only relevant for Claude agent)
+  const [hasIsaac, setHasIsaac] = useState(false);
+  const [cliMode, setCliMode] = useState<"isaac" | "claude">("isaac");
+
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>("blank");
 
@@ -224,6 +228,15 @@ export function NewSessionModal({
   // Reset form when modal opens (only once per open)
   useEffect(() => {
     if (open && !initialized) {
+      // Fetch CLI info (isaac availability)
+      fetch("/api/cli-info")
+        .then((res) => res.json())
+        .then((info) => {
+          setHasIsaac(info.hasIsaac);
+          setCliMode(info.hasIsaac ? "isaac" : "claude");
+        })
+        .catch(() => {});
+
       // Fetch default base branch from settings
       fetch("/api/settings")
         .then((res) => res.json())
@@ -398,21 +411,11 @@ export function NewSessionModal({
 
   const isCreateDisabled = !selectedAgent || isCreating || (!selectedAgent?.command && !commandArgs && activeTab !== "resume") || (activeTab === "github" && !selectedGithubIssue) || (activeTab === "resume" && !selectedConversation);
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); handleClose(); }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [open]);
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !isCreateDisabled) {
-      // Don't intercept Enter in search inputs where it triggers a search
-      const el = e.target as HTMLElement;
-      if (el.dataset.enterSearch) return;
+      // Don't intercept Enter in the GitHub repo input or resume search input
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
       e.preventDefault();
       handleCreate();
     }
@@ -435,8 +438,13 @@ export function NewSessionModal({
         effectiveCommandArgs = `--resume ${selectedConversation.sessionId}`;
       }
 
-      const fullCommand = selectedAgent.command
-        ? (effectiveCommandArgs ? `${selectedAgent.command} ${effectiveCommandArgs}` : selectedAgent.command)
+      // Override command if user selected "claude" CLI mode instead of default "isaac"
+      const agentCommand = selectedAgent.id === "claude" && cliMode === "claude"
+        ? "claude"
+        : selectedAgent.command;
+
+      const fullCommand = agentCommand
+        ? (effectiveCommandArgs ? `${agentCommand} ${effectiveCommandArgs}` : agentCommand)
         : effectiveCommandArgs;
 
       // If replacing existing session, delete it first
@@ -531,6 +539,11 @@ export function NewSessionModal({
             }),
           });
 
+          if (!res.ok) {
+            console.error(`Failed to create session ${i + 1}/${count}:`, res.status);
+            continue;
+          }
+
           const { sessionId, gitBranch, cwd: newCwd } = await res.json();
 
           const { x, y } = freePositions[i];
@@ -584,7 +597,6 @@ export function NewSessionModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={handleClose}
-            data-modal-overlay
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
           />
 
@@ -698,6 +710,37 @@ export function NewSessionModal({
                           );
                         })}
                       </div>
+
+                      {/* CLI mode toggle for Claude agent */}
+                      {selectedAgent?.id === "claude" && hasIsaac && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <label className="text-xs text-zinc-500">CLI:</label>
+                          <div className="flex rounded-md border border-border overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setCliMode("isaac")}
+                              className={`px-3 py-1 text-xs font-medium transition-colors ${
+                                cliMode === "isaac"
+                                  ? "bg-zinc-700 text-white"
+                                  : "text-zinc-400 hover:text-white hover:bg-surface-hover"
+                              }`}
+                            >
+                              isaac
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCliMode("claude")}
+                              className={`px-3 py-1 text-xs font-medium transition-colors ${
+                                cliMode === "claude"
+                                  ? "bg-zinc-700 text-white"
+                                  : "text-zinc-400 hover:text-white hover:bg-surface-hover"
+                              }`}
+                            >
+                              claude
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -840,7 +883,6 @@ export function NewSessionModal({
                                 type="text"
                                 value={resumeQuery}
                                 onChange={(e) => setResumeQuery(e.target.value)}
-                                data-enter-search="true"
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") searchResumeConversations(resumeQuery);
                                 }}

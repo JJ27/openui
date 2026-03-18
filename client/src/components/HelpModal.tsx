@@ -15,7 +15,7 @@ const shortcuts: { keys: string; desc: string }[] = [
   { keys: `Alt+Shift+1\u20139`, desc: "Switch canvas by index" },
   { keys: `Alt+T`, desc: "New canvas" },
   { keys: `?`, desc: "Open this help panel" },
-  { keys: "Esc", desc: "Close dialogs" },
+  { keys: "Esc", desc: "Close sidebar / dialogs" },
 ];
 
 interface HelpModalProps {
@@ -55,16 +55,6 @@ export function HelpModal({ open, onClose, onRestartTour, unseenUpdates, olderUp
     }
   }, [open]);
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); onClose(); }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [open, onClose]);
-
   return (
     <AnimatePresence>
       {open && (
@@ -72,7 +62,6 @@ export function HelpModal({ open, onClose, onRestartTour, unseenUpdates, olderUp
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          data-modal-overlay
           className="fixed inset-0 z-[70] flex items-center justify-center"
           style={{ backgroundColor: "rgba(0, 0, 0, 0.6)" }}
           onClick={onClose}

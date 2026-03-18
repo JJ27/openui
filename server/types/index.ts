@@ -14,6 +14,7 @@ export interface Session {
   createdAt: string;
   clients: Set<ServerWebSocket<WebSocketData>>;
   outputBuffer: string[];
+  outputSeq: number; // monotonically increasing sequence number for output chunks
   status: AgentStatus;
   lastOutputTime: number;
   lastInputTime: number;
@@ -35,6 +36,8 @@ export interface Session {
   lastPluginStatusTime?: number;
   // Claude Code's internal session ID (different from our sessionId)
   claudeSessionId?: string;
+  // History of previous Claude session IDs (accumulated across /clear operations)
+  claudeSessionHistory?: string[];
   // Current tool being used (from plugin)
   currentTool?: string;
   // Last hook event received
@@ -77,6 +80,7 @@ export interface PersistedNode {
   icon?: string;
   position: { x: number; y: number };
   claudeSessionId?: string;  // Claude Code's internal session ID for --resume
+  claudeSessionHistory?: string[];  // Previous Claude session IDs (across /clear operations)
   archived?: boolean;
   autoResumed?: boolean;  // True if session was auto-resumed on startup
   canvasId: string;  // Canvas/tab this agent belongs to
@@ -113,4 +117,5 @@ export interface Agent {
 
 export interface WebSocketData {
   sessionId: string;
+  lastSeq: number;
 }

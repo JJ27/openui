@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { spawn as spawnPty } from "bun-pty";
-import { existsSync, readdirSync } from "fs";
+import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import type { Session } from "../types";
@@ -15,36 +15,6 @@ const logError = QUIET ? () => {} : console.error.bind(console);
 const HAS_ISAAC = spawnSync(["which", "isaac"], { stdout: "pipe", stderr: "pipe" }).exitCode === 0;
 export const DEFAULT_CLAUDE_COMMAND = HAS_ISAAC ? "isaac claude" : "llm agent claude";
 log(`\x1b[38;5;141m[cli]\x1b[0m Detected CLI: ${DEFAULT_CLAUDE_COMMAND} (isaac ${HAS_ISAAC ? "found" : "not found"})`);
-
-// Resolve the correct cwd for resuming a Claude session.
-// Claude stores sessions by project path (derived from cwd at creation time).
-// The cwd in state.json can drift (e.g., agent cd'd into a subdirectory), so
-// on resume the PTY cwd may not match where Claude stored the session.
-// This reads the session's JSONL first line to get the original cwd.
-export function resolveResumeCwd(sessionCwd: string, claudeSessionId: string | undefined): string {
-  if (!claudeSessionId) return sessionCwd;
-  const sessionFile = `${claudeSessionId}.jsonl`;
-  const projectsDir = join(homedir(), ".claude", "projects");
-  try {
-    // Search project dirs for the session JSONL (typically <100 dirs, very fast)
-    for (const dir of readdirSync(projectsDir)) {
-      const filePath = join(projectsDir, dir, sessionFile);
-      if (existsSync(filePath)) {
-        // Read only first line (session JSONLs can be large, avoid reading entire file)
-        const headResult = spawnSync(["head", "-1", filePath], { stdout: "pipe", stderr: "pipe" });
-        if (headResult.exitCode !== 0) return sessionCwd;
-        const firstLine = headResult.stdout.toString().trim();
-        const meta = JSON.parse(firstLine);
-        if (meta.cwd && meta.cwd !== sessionCwd) {
-          log(`\x1b[38;5;141m[auto-resume]\x1b[0m cwd corrected: ${sessionCwd} → ${meta.cwd}`);
-          return meta.cwd;
-        }
-        return sessionCwd;
-      }
-    }
-  } catch {}
-  return sessionCwd;
-}
 
 // Get the OpenUI plugin directory path
 function getPluginDir(): string | null {
@@ -131,11 +101,64 @@ export function getGitBranch(cwd: string): string | null {
 }
 
 
-export const MAX_BUFFER_SIZE = 1000;
+// Create a git worktree for a branch (used when isaac is not available)
+export function createWorktreeForBranch(cwd: string, branchName: string, baseBranch?: string): string | null {
+  try {
+    // Get the git toplevel to build a sibling worktree path
+    const topResult = spawnSync(["git", "rev-parse", "--show-toplevel"], {
+      cwd, stdout: "pipe", stderr: "pipe",
+    });
+    if (topResult.exitCode !== 0) return null;
+    const repoRoot = topResult.stdout.toString().trim();
+    const repoName = repoRoot.split("/").pop() || "repo";
+    const worktreePath = join(repoRoot, "..", `${repoName}-worktrees`, branchName.replace(/\//g, "-"));
+
+    // Check if worktree already exists
+    if (existsSync(worktreePath)) {
+      log(`\x1b[38;5;141m[git]\x1b[0m Worktree already exists at ${worktreePath}`);
+      return worktreePath;
+    }
+
+    // Check if the branch already exists
+    const branchExists = spawnSync(["git", "rev-parse", "--verify", branchName], {
+      cwd, stdout: "pipe", stderr: "pipe",
+    }).exitCode === 0;
+
+    if (branchExists) {
+      // Worktree from existing branch
+      const result = spawnSync(["git", "worktree", "add", worktreePath, branchName], {
+        cwd, stdout: "pipe", stderr: "pipe",
+      });
+      if (result.exitCode !== 0) {
+        log(`\x1b[38;5;208m[git]\x1b[0m Worktree add failed: ${result.stderr.toString()}`);
+        return null;
+      }
+    } else {
+      // Create new branch (from baseBranch or HEAD) with worktree
+      const base = baseBranch || "HEAD";
+      const result = spawnSync(["git", "worktree", "add", "-b", branchName, worktreePath, base], {
+        cwd, stdout: "pipe", stderr: "pipe",
+      });
+      if (result.exitCode !== 0) {
+        log(`\x1b[38;5;208m[git]\x1b[0m Worktree add -b failed: ${result.stderr.toString()}`);
+        return null;
+      }
+    }
+
+    return worktreePath;
+  } catch (e) {
+    log(`\x1b[38;5;208m[git]\x1b[0m Worktree creation error: ${e}`);
+    return null;
+  }
+}
+
+export const MAX_BUFFER_SIZE = 5000;
 
 /** Broadcast a message to all WebSocket clients of a session, with try-catch per client */
 export function broadcastToSession(session: Session, message: object) {
-  const json = JSON.stringify(message);
+  // Auto-attach outputSeq to output messages so clients can track position
+  const msg = (message as any).type === "output" ? { ...message, seq: session.outputSeq } : message;
+  const json = JSON.stringify(msg);
   for (const client of session.clients) {
     try {
       if (client.readyState === 1) {
@@ -145,6 +168,18 @@ export function broadcastToSession(session: Session, message: object) {
       session.clients.delete(client);
     }
   }
+}
+
+/** Attach the standard PTY output handler to a session */
+export function attachOutputHandler(session: Session, ptyProcess: any): void {
+  ptyProcess.onData((data: string) => {
+    session.outputBuffer.push(data);
+    session.outputSeq++;
+    if (session.outputBuffer.length > MAX_BUFFER_SIZE) session.outputBuffer.shift();
+    session.lastOutputTime = Date.now();
+    session.recentOutputSize += data.length;
+    broadcastToSession(session, { type: "output", data });
+  });
 }
 
 export const sessions = new Map<string, Session>();
@@ -172,7 +207,7 @@ export async function createSession(params: {
     agentId,
     agentName,
     command,
-    cwd: rawCwd,
+    cwd: originalCwd,
     nodeId,
     customName,
     customColor,
@@ -185,53 +220,56 @@ export async function createSession(params: {
     ticketPromptTemplate,
   } = params;
 
-  // Expand ~ in cwd
-  let originalCwd = rawCwd.replace(/^~(?=$|\/)/, homedir());
-
-  // Build isaac flags for worktree/branch/PR
+  // Build CLI flags for worktree/branch/PR
+  const isIsaacCommand = command.startsWith("isaac ");
   let isaacFlags = "";
   let gitBranch: string | null = null;
+  let effectiveCwd = originalCwd;
   if (agentId === "claude") {
     if (branchName) {
-      // Check if the branch is already checked out in an existing worktree
-      let existingWorktreePath: string | null = null;
-      try {
-        const wtResult = spawnSync(["git", "worktree", "list", "--porcelain"], {
-          cwd: originalCwd, stdout: "pipe", stderr: "pipe",
-        });
-        if (wtResult.exitCode === 0) {
-          const blocks = wtResult.stdout.toString().split("\n\n");
-          for (const block of blocks) {
-            if (block.includes(`branch refs/heads/${branchName}\n`) || block.endsWith(`branch refs/heads/${branchName}`)) {
-              const pathMatch = block.match(/^worktree (.+)$/m);
-              if (pathMatch) {
-                existingWorktreePath = pathMatch[1];
-                break;
-              }
+      if (isIsaacCommand) {
+        // Isaac handles worktree creation via --worktree --branch flags
+        if (baseBranch) {
+          try {
+            const branchExists = spawnSync(["git", "rev-parse", "--verify", branchName], {
+              cwd: originalCwd, stdout: "pipe", stderr: "pipe",
+            }).exitCode === 0;
+            if (!branchExists) {
+              log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${branchName}" from "${baseBranch}"`);
+              spawnSync(["git", "branch", branchName, baseBranch], {
+                cwd: originalCwd, stdout: "pipe", stderr: "pipe",
+              });
             }
+          } catch {
+            log(`\x1b[38;5;208m[git]\x1b[0m git not available, skipping branch pre-creation`);
           }
         }
-      } catch {}
-
-      if (existingWorktreePath) {
-        // Branch already checked out — start in that directory directly
-        log(`\x1b[38;5;141m[git]\x1b[0m Branch "${branchName}" already at ${existingWorktreePath}`);
-        originalCwd = existingWorktreePath;
-      } else {
-        // Let isaac create a new worktree for this branch
         isaacFlags += ` --worktree --branch "${branchName}"`;
+      } else {
+        // Non-isaac CLI doesn't support --worktree; create worktree manually
+        try {
+          const worktreeCwd = createWorktreeForBranch(originalCwd, branchName, baseBranch);
+          if (worktreeCwd) {
+            effectiveCwd = worktreeCwd;
+            log(`\x1b[38;5;141m[git]\x1b[0m Using worktree at ${worktreeCwd} for branch "${branchName}"`);
+          }
+        } catch (e) {
+          log(`\x1b[38;5;208m[git]\x1b[0m Failed to create worktree: ${e}`);
+        }
       }
       gitBranch = branchName;
     }
     if (prNumber) {
-      isaacFlags += ` --worktree --pr ${prNumber}`;
+      if (isIsaacCommand) {
+        isaacFlags += ` --pr ${prNumber}`;
+      }
       if (!gitBranch) gitBranch = `PR #${prNumber}`;
     }
   }
 
   // If not set from flags, detect git branch
   if (!gitBranch) {
-    gitBranch = getGitBranch(originalCwd);
+    gitBranch = getGitBranch(effectiveCwd);
   }
 
   const now = Date.now();
@@ -240,11 +278,12 @@ export async function createSession(params: {
     agentId,
     agentName,
     command,
-    cwd: originalCwd,
+    cwd: effectiveCwd,
     gitBranch: gitBranch || undefined,
     createdAt: new Date().toISOString(),
     clients: new Set(),
     outputBuffer: [],
+    outputSeq: 0,
     status: "idle",
     lastOutputTime: now,
     lastInputTime: 0,
@@ -263,7 +302,7 @@ export async function createSession(params: {
   // Spawn PTY
   const ptyProcess = spawnPty("/bin/bash", [], {
     name: "xterm-256color",
-    cwd: originalCwd,
+    cwd: effectiveCwd,
     env: {
       ...process.env,
       TERM: "xterm-256color",
@@ -284,18 +323,7 @@ export async function createSession(params: {
     session.recentOutputSize = Math.max(0, session.recentOutputSize - 50);
   }, 500);
 
-  // PTY output handler
-  ptyProcess.onData((data: string) => {
-    session.outputBuffer.push(data);
-    if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
-      session.outputBuffer.shift();
-    }
-
-    session.lastOutputTime = Date.now();
-    session.recentOutputSize += data.length;
-
-    broadcastToSession(session, { type: "output", data });
-  });
+  attachOutputHandler(session, ptyProcess);
 
   // Run the command with plugin-dir and isaac flags
   const finalCommand = injectPluginDir(command, agentId) + isaacFlags;
@@ -319,7 +347,49 @@ export async function createSession(params: {
   }, 300);
 
   log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}${isaacFlags ? ` (flags:${isaacFlags})` : ""}`);
-  return { session, cwd: originalCwd, gitBranch: gitBranch || undefined };
+  return { session, cwd: effectiveCwd, gitBranch: gitBranch || undefined };
+}
+
+export function createShellSession(cwd: string, nodeId: string): { shellId: string; session: Session } {
+  const shellId = `shell-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const userShell = process.env.SHELL || "/bin/bash";
+
+  const session: Session = {
+    pty: null as any,
+    agentId: "shell",
+    agentName: "Shell",
+    command: "",
+    cwd,
+    createdAt: new Date().toISOString(),
+    clients: new Set(),
+    outputBuffer: [],
+    outputSeq: 0,
+    status: "idle",
+    lastOutputTime: Date.now(),
+    lastInputTime: 0,
+    recentOutputSize: 0,
+    nodeId,
+    isRestored: false,
+  };
+
+  const ptyProcess = spawnPty(userShell, [], {
+    name: "xterm-256color",
+    cwd,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+    },
+    rows: 30,
+    cols: 120,
+  });
+
+  session.pty = ptyProcess;
+  attachOutputHandler(session, ptyProcess);
+
+  sessions.set(shellId, session);
+  log(`\x1b[38;5;141m[shell]\x1b[0m Created shell ${shellId} at ${cwd}`);
+
+  return { shellId, session };
 }
 
 export function deleteSession(sessionId: string) {
@@ -345,6 +415,12 @@ export function restoreSessions() {
       continue;
     }
 
+    // Skip shell sessions — they're ephemeral and should not be persisted/restored
+    if (node.agentId === "shell") {
+      log(`[restore] Skipping shell session: ${node.sessionId}`);
+      continue;
+    }
+
     // Migrate command format when isaac is available
     if (HAS_ISAAC && node.command.startsWith("llm agent claude")) {
       const oldCommand = node.command;
@@ -367,6 +443,7 @@ export function restoreSessions() {
       createdAt: node.createdAt,
       clients: new Set(),
       outputBuffer: buffer,
+      outputSeq: 0,
       status: "disconnected",
       lastOutputTime: 0,
       lastInputTime: 0,
@@ -378,6 +455,7 @@ export function restoreSessions() {
       isRestored: true,
       autoResumed: node.autoResumed || false,
       claudeSessionId: node.claudeSessionId,
+      claudeSessionHistory: node.claudeSessionHistory,
       archived: false,
       canvasId: node.canvasId,
       ticketId: node.ticketId,
@@ -427,13 +505,10 @@ export function autoResumeSessions() {
 
     const startFn = () => {
       try {
-        // Resolve the correct cwd for Claude session discovery
-        const resumeCwd = resolveResumeCwd(session.cwd, session.claudeSessionId);
-
         // Spawn a new PTY for this session
         const ptyProcess = spawnPty("/bin/bash", [], {
           name: "xterm-256color",
-          cwd: resumeCwd,
+          cwd: session.cwd,
           env: {
             ...process.env,
             TERM: "xterm-256color",
@@ -448,29 +523,25 @@ export function autoResumeSessions() {
         session.isRestored = false;
         session.autoResumed = true;
 
-        // Set up PTY data handler
-        ptyProcess.onData((data: string) => {
-          session.outputBuffer.push(data);
-          if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
-            session.outputBuffer.shift();
-          }
-
-          session.lastOutputTime = Date.now();
-          session.recentOutputSize += data.length;
-
-          // Broadcast to all connected clients
-          broadcastToSession(session, { type: "output", data });
-        });
+        attachOutputHandler(session, ptyProcess);
 
         // Build the command with resume flag if we have a Claude session ID
         let finalCommand = injectPluginDir(session.command, session.agentId);
 
         // For Claude sessions, use --resume to restore the specific session.
-        // If the command already has --resume, that's the canonical ID — use it as-is.
-        // Only inject from claudeSessionId when there's no --resume yet (first resume).
+        // If the command already has --resume but claudeSessionId is newer (e.g. after /clear),
+        // update the resume ID to the latest one.
         const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         const existingResume = session.command.match(/--resume\s+([\w-]+)/);
-        if (existingResume) {
+        if (existingResume && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)
+            && existingResume[1] !== session.claudeSessionId) {
+          // claudeSessionId is newer than what's in the command — update both
+          const oldId = existingResume[1];
+          const resumeArg = `--resume ${session.claudeSessionId}`;
+          session.command = session.command.replace(/--resume\s+[\w-]+/, resumeArg);
+          finalCommand = finalCommand.replace(/--resume\s+[\w-]+/, resumeArg);
+          log(`\x1b[38;5;141m[auto-resume]\x1b[0m Updated stale --resume ${oldId} → ${session.claudeSessionId}`);
+        } else if (existingResume) {
           log(`\x1b[38;5;141m[auto-resume]\x1b[0m Using existing --resume ${existingResume[1]} from command`);
         } else if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
           const resumeArg = `--resume ${session.claudeSessionId}`;

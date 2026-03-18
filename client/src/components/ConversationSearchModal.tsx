@@ -39,16 +39,6 @@ export function ConversationSearchModal({ open, onClose, onResume }: Conversatio
   const [projects, setProjects] = useState<{ dirName: string; originalPath: string }[]>([]);
   const [selectedProject, setSelectedProject] = useState("");
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); onClose(); }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [open, onClose]);
-
   // Load projects on open
   useEffect(() => {
     if (open) {
@@ -109,7 +99,6 @@ export function ConversationSearchModal({ open, onClose, onResume }: Conversatio
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          data-modal-overlay
           className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]"
           onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >

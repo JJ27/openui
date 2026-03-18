@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
+import { useStore } from "../stores/useStore";
 
 interface SettingsModalProps {
   open: boolean;
@@ -11,17 +12,10 @@ interface SettingsModalProps {
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [defaultBaseBranch, setDefaultBaseBranch] = useState("main");
   const [updateChannel, setUpdateChannel] = useState("stable");
+  const [terminalScrollToBottom, setTerminalScrollToBottom] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); onClose(); }
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [open, onClose]);
+  const notificationsEnabled = useStore((s) => s.notificationsEnabled);
+  const setNotificationsEnabled = useStore((s) => s.setNotificationsEnabled);
 
   // Load existing config
   useEffect(() => {
@@ -31,6 +25,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         .then((config) => {
           setDefaultBaseBranch(config.defaultBaseBranch || "main");
           setUpdateChannel(config.updateChannel || "stable");
+          setTerminalScrollToBottom(config.terminalScrollToBottom !== false);
         })
         .catch(console.error);
     }
@@ -46,6 +41,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         body: JSON.stringify({
           defaultBaseBranch,
           updateChannel,
+          terminalScrollToBottom,
         }),
       });
 
@@ -65,7 +61,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            data-modal-overlay
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
             onClick={onClose}
           />
@@ -123,6 +118,66 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       {updateChannel === "stable"
                         ? "Receive tested, stable updates only."
                         : "Receive the latest changes from main. May contain bugs."}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Terminal Settings */}
+                <div>
+                  <h3 className="text-sm font-medium text-white mb-3">Terminal</h3>
+                  <div className="space-y-2">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-xs text-zinc-400">Auto-scroll to bottom on new output</span>
+                      <button
+                        onClick={() => setTerminalScrollToBottom(!terminalScrollToBottom)}
+                        className={`relative w-9 h-5 rounded-full transition-colors ${
+                          terminalScrollToBottom ? "bg-green-600" : "bg-zinc-700"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                            terminalScrollToBottom ? "translate-x-4" : ""
+                          }`}
+                        />
+                      </button>
+                    </label>
+                    <p className="text-xs text-zinc-600">
+                      {terminalScrollToBottom
+                        ? "Terminal follows new output automatically."
+                        : "Terminal stays at current scroll position when new output arrives."}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Notifications */}
+                <div>
+                  <h3 className="text-sm font-medium text-white mb-3">Notifications</h3>
+                  <div className="space-y-2">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-xs text-zinc-400">Notify when agents need input</span>
+                      <button
+                        onClick={() => {
+                          const next = !notificationsEnabled;
+                          setNotificationsEnabled(next);
+                          if (next && "Notification" in window && Notification.permission === "default") {
+                            Notification.requestPermission();
+                          }
+                        }}
+                        className={`relative w-9 h-5 rounded-full transition-colors ${
+                          notificationsEnabled ? "bg-green-600" : "bg-zinc-700"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                            notificationsEnabled ? "translate-x-4" : ""
+                          }`}
+                        />
+                      </button>
+                    </label>
+                    <p className="text-xs text-zinc-600">
+                      {notificationsEnabled
+                        ? "Toast and native notifications when an agent is waiting."
+                        : "No notifications when agents need input."}
                     </p>
                   </div>
                 </div>

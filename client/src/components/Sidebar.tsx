@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
   Terminal as TerminalIcon,
   Clock,
-  Folder,
   Edit3,
   RotateCcw,
   Sparkles,
@@ -18,22 +18,19 @@ import {
   GitBranch,
   GitFork,
   Archive,
+  Trash2,
+  Plus,
+  Maximize2,
+  Minimize2,
+  MoreHorizontal,
+  ChevronRight,
 } from "lucide-react";
-import { useStore, AgentStatus } from "../stores/useStore";
-import { Terminal } from "./Terminal";
+import { useStore } from "../stores/useStore";
+import { useTerminalPool } from "../contexts/TerminalPoolContext";
 import { ResizeHandle } from "./ResizeHandle";
 import { ForkDialog, type ForkDialogResult } from "./ForkDialog";
-
-const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
-  running: { label: "Running", color: "#22C55E" },
-  waiting: { label: "Waiting", color: "#6366F1" },
-  compacting: { label: "Compacting", color: "#06B6D4" },
-  waiting_input: { label: "Waiting for input", color: "#FBBF24" },
-  tool_calling: { label: "Tool Calling", color: "#8B5CF6" },
-  idle: { label: "Idle", color: "#6B7280" },
-  disconnected: { label: "Disconnected", color: "#EF4444" },
-  error: { label: "Error", color: "#EF4444" },
-};
+import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
+import { deleteSessionWithCleanup } from "../utils/deleteSession";
 
 const presetColors = [
   "#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#EF4444", "#FBBF24", "#14B8A6"
@@ -50,6 +47,64 @@ const iconOptions = [
   { id: "wand2", icon: Wand2, label: "Wand" },
 ];
 
+interface MountedTerminal {
+  id: string;
+  sessionId: string;
+  nodeId: string;
+  color: string;
+  isShell?: boolean;
+}
+
+function PooledTerminalMount({
+  terminalId,
+  terminals,
+}: {
+  terminalId: string | null;
+  terminals: Record<string, MountedTerminal>;
+}) {
+  const pool = useTerminalPool();
+  const mountRef = useRef<HTMLDivElement>(null);
+  const prevIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!mountRef.current) return;
+
+    // Detach previous terminal if switching
+    if (prevIdRef.current && prevIdRef.current !== terminalId) {
+      pool.detach(prevIdRef.current);
+    }
+
+    // Attach new terminal
+    if (terminalId) {
+      const info = terminals[terminalId];
+      if (info) {
+        pool.acquire(terminalId, info.sessionId, info.nodeId, info.color, !!info.isShell);
+        pool.attachTo(terminalId, mountRef.current);
+      }
+    }
+
+    prevIdRef.current = terminalId;
+  }, [terminalId, terminals, pool]);
+
+  // Detach on unmount (sidebar closing)
+  useEffect(() => {
+    return () => {
+      if (prevIdRef.current) {
+        pool.detach(prevIdRef.current);
+        prevIdRef.current = null;
+      }
+    };
+  }, [pool]);
+
+  return (
+    <div
+      ref={mountRef}
+      className="w-full h-full"
+      style={{ backgroundColor: "#0d0d0d" }}
+    />
+  );
+}
+
 export function Sidebar() {
   const {
     sidebarOpen,
@@ -62,14 +117,18 @@ export function Sidebar() {
     nodes,
     setNewSessionModalOpen,
     setNewSessionForNodeId,
-    archiveSession,
     unarchiveSession,
     showArchived,
     addNode,
     addSession,
     activeCanvasId,
+    sidebarWidth,
+    setSidebarWidth,
+    shellTabs: shellTabsMap,
+    setShellTabs,
   } = useStore();
 
+  const pool = useTerminalPool();
   const session = selectedNodeId ? sessions.get(selectedNodeId) : null;
   const node = selectedNodeId ? nodes.find(n => n.id === selectedNodeId) : null;
 
@@ -78,12 +137,37 @@ export function Sidebar() {
   const [editNotes, setEditNotes] = useState("");
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
-  const [terminalKey, setTerminalKey] = useState(0);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = localStorage.getItem("openui-sidebar-width");
-    return saved ? parseInt(saved, 10) : 512;
-  });
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [mountedTerminals, setMountedTerminals] = useState<Record<string, MountedTerminal>>({});
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  const [shellsRestored, setShellsRestored] = useState(false);
+
+  // Restore persisted shell tabs from server on mount
+  useEffect(() => {
+    if (shellsRestored) return;
+    fetch("/api/shells")
+      .then(res => res.ok ? res.json() : [])
+      .then((shells: { shellId: string; nodeId: string; cwd: string; createdAt: string }[]) => {
+        const currentTabs = useStore.getState().shellTabs;
+        for (const shell of shells) {
+          if (!shell.nodeId) continue;
+          const existing = currentTabs.get(shell.nodeId) || [];
+          // Avoid duplicates (e.g. if already created in this session)
+          if (existing.some(t => t.shellId === shell.shellId)) continue;
+          const updated = [...existing, { id: shell.shellId, shellId: shell.shellId }];
+          setShellTabs(shell.nodeId, updated);
+        }
+        setShellsRestored(true);
+      })
+      .catch(() => setShellsRestored(true));
+  }, [shellsRestored, setShellTabs]);
+  const shellTabs = selectedNodeId ? (shellTabsMap.get(selectedNodeId) || []) : [];
+  const [activeTerminalTab, setActiveTerminalTab] = useState<string>("agent");
+  const [terminalMaximized, setTerminalMaximized] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   // Reset edit state when session changes (but NOT when nodes change)
   useEffect(() => {
@@ -94,13 +178,16 @@ export function Sidebar() {
       const currentNode = nodes.find(n => n.id === selectedNodeId);
       const nodeIcon = currentNode?.data?.icon;
       setEditIcon(typeof nodeIcon === 'string' ? nodeIcon : "cpu");
+      setIsEditing(false);
+      setShowMenu(false);
+      setActiveTerminalTab("agent");
     }
-    setIsEditing(false);
-    // Force terminal recreation when session changes
-    setTerminalKey(k => k + 1);
   }, [session?.sessionId]); // Removed nodes and selectedNodeId to prevent closing on updates
 
   const handleClose = () => {
+    // Just close the sidebar UI — shell tabs persist in the Zustand store
+    // so they reappear when the panel is reopened for the same node.
+    setActiveTerminalTab("agent");
     setSidebarOpen(false);
     setSelectedNodeId(null);
     setIsEditing(false);
@@ -112,6 +199,71 @@ export function Sidebar() {
       setNewSessionModalOpen(true);
     }
   };
+
+  const handleNewShellTab = useCallback(async () => {
+    if (!session || !selectedNodeId) return;
+    try {
+      const res = await fetch("/api/shell", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: session.cwd, nodeId: selectedNodeId }),
+      });
+      if (!res.ok) return;
+      const { shellId } = await res.json();
+      const tabId = `shell-${Date.now()}`;
+      const newTab = { id: tabId, shellId };
+
+      if (selectedNodeId) {
+        const updated = [...(shellTabsMap.get(selectedNodeId) || []), newTab];
+        setShellTabs(selectedNodeId, updated);
+      }
+      setActiveTerminalTab(tabId);
+    } catch (e) {
+      console.error("Failed to create shell:", e);
+    }
+  }, [session, selectedNodeId]);
+
+  const upsertMountedTerminal = useCallback((terminal: MountedTerminal) => {
+    setMountedTerminals((prev) => {
+      const existing = prev[terminal.id];
+      if (
+        existing
+        && existing.sessionId === terminal.sessionId
+        && existing.nodeId === terminal.nodeId
+        && existing.color === terminal.color
+        && existing.isShell === terminal.isShell
+      ) {
+        return prev;
+      }
+      return { ...prev, [terminal.id]: terminal };
+    });
+  }, []);
+
+  const removeMountedTerminal = useCallback((terminalId: string) => {
+    setMountedTerminals((prev) => {
+      if (!prev[terminalId]) return prev;
+      const next = { ...prev };
+      delete next[terminalId];
+      return next;
+    });
+  }, []);
+
+  const handleCloseShellTab = useCallback(async (tabId: string, shellId: string) => {
+    // Kill the PTY
+    try {
+      await fetch(`/api/shell/${shellId}`, { method: "DELETE" });
+    } catch {}
+
+    if (selectedNodeId) {
+      const updated = (shellTabsMap.get(selectedNodeId) || []).filter(t => t.id !== tabId);
+      setShellTabs(selectedNodeId, updated);
+    }
+
+    removeMountedTerminal(`shell:${shellId}`);
+
+    // Switch to agent tab if the closed tab was active
+    setActiveTerminalTab(prev => prev === tabId ? "agent" : prev);
+  }, [removeMountedTerminal, selectedNodeId]);
 
   const canFork = session?.agentId === "claude";
 
@@ -177,98 +329,194 @@ export function Sidebar() {
   };
 
   const displayColor = editColor || session?.customColor || session?.color || "#888";
-  const statusInfo = statusConfig[session?.status || "idle"];
   const isDisconnected = session?.status === "disconnected";
+
+  useEffect(() => {
+    if (!session || !selectedNodeId) return;
+    upsertMountedTerminal({
+      id: `agent:${session.sessionId}`,
+      sessionId: session.sessionId,
+      nodeId: selectedNodeId,
+      color: displayColor,
+    });
+  }, [displayColor, selectedNodeId, session, upsertMountedTerminal]);
+
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    for (const tab of shellTabs) {
+      upsertMountedTerminal({
+        id: `shell:${tab.shellId}`,
+        sessionId: tab.shellId,
+        nodeId: selectedNodeId,
+        color: "#888",
+        isShell: true,
+      });
+    }
+  }, [selectedNodeId, shellTabs, upsertMountedTerminal]);
+
+  useEffect(() => {
+    setMountedTerminals((prev) => {
+      const activeShellIds = new Set(
+        Array.from(shellTabsMap.values()).flat().map((tab) => tab.shellId)
+      );
+      const activeAgentSessionIds = new Set(
+        Array.from(sessions.values()).map((item) => item.sessionId)
+      );
+
+      let changed = false;
+      const next: Record<string, MountedTerminal> = {};
+      for (const [terminalId, terminal] of Object.entries(prev)) {
+        const keep = terminal.isShell
+          ? activeShellIds.has(terminal.sessionId)
+          : activeAgentSessionIds.has(terminal.sessionId);
+
+        if (keep) {
+          next[terminalId] = terminal;
+        } else {
+          changed = true;
+          // Release from pool when session/shell is removed
+          pool.release(terminalId);
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [sessions, shellTabsMap]);
+
+  const activeTerminalId = activeTerminalTab === "agent"
+    ? (session ? `agent:${session.sessionId}` : null)
+    : (() => {
+        const tab = shellTabs.find((item) => item.id === activeTerminalTab);
+        return tab ? `shell:${tab.shellId}` : null;
+      })();
 
   return (
     <>
     <AnimatePresence>
       {sidebarOpen && session && (
         <motion.div
+          ref={sidebarRef}
+          key="sidebar"
           initial={{ x: "100%", opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           exit={{ x: "100%", opacity: 0 }}
-          transition={{ type: "spring", stiffness: 400, damping: 40 }}
-          className="fixed right-0 top-14 bottom-0 z-50 flex flex-col bg-canvas-dark border-l border-border"
-          style={{ width: sidebarWidth }}
+          transition={terminalMaximized ? { duration: 0 } : { type: "spring", stiffness: 400, damping: 40 }}
+          className={`fixed z-50 flex flex-col bg-canvas-dark ${terminalMaximized ? "inset-0" : "right-0 top-14 bottom-0 border-l border-border"}`}
+          style={terminalMaximized ? undefined : { width: `${sidebarWidth}vw` }}
         >
-          <ResizeHandle
-            onResize={(width) => {
-              setSidebarWidth(width);
-              localStorage.setItem("openui-sidebar-width", width.toString());
-            }}
-            initialWidth={sidebarWidth}
-            minWidth={320}
-            maxWidth={1200}
-          />
-          {/* Header */}
-          <div className="flex-shrink-0 px-4 py-3 border-b border-border">
-            <div className="flex items-center gap-3">
-              <div
-                className="w-3 h-3 rounded-full flex-shrink-0"
-                style={{ backgroundColor: displayColor }}
-              />
-              <div className="flex-1 min-w-0">
-                <h2 className="text-sm font-medium text-white truncate">
-                  {session.customName || session.agentName}
-                </h2>
-                <div className="flex items-center gap-2 mt-0.5">
+          {!terminalMaximized && (
+            <ResizeHandle
+              onResize={(widthPx) => {
+                const pct = (widthPx / window.innerWidth) * 100;
+                // Set DOM directly to bypass Framer Motion
+                if (sidebarRef.current) {
+                  sidebarRef.current.style.width = `${pct}vw`;
+                }
+                setSidebarWidth(pct);
+                localStorage.setItem("openui-sidebar-pct", pct.toString());
+              }}
+              initialWidth={sidebarWidth}
+              minWidth={320}
+            />
+          )}
+          {/* Header + Tab Row */}
+          <div className="flex-shrink-0 border-b border-border">
+            <div className="flex items-center px-3 py-1.5 gap-2">
+              {/* Node name — hidden when maximized */}
+              {!terminalMaximized && (
+                <>
                   <div
-                    className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: statusInfo.color }}
+                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: displayColor }}
                   />
-                  <span className="text-[10px] text-zinc-500">{statusInfo.label}</span>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-1 flex-shrink-0">
+                  <span className="text-xs font-medium text-white truncate max-w-[120px] flex-shrink-0">
+                    {session.customName || session.agentName}
+                  </span>
+                </>
+              )}
+
+              {/* Terminal tabs */}
+              <div className="flex items-center overflow-x-auto flex-1 min-w-0 gap-0.5">
                 <button
-                  onClick={() => setIsEditing(!isEditing)}
-                  className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${
-                    isEditing
-                      ? "text-white bg-surface-active"
-                      : "text-zinc-500 hover:text-white hover:bg-surface-active"
+                  onClick={() => setActiveTerminalTab("agent")}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs whitespace-nowrap rounded transition-colors ${
+                    activeTerminalTab === "agent"
+                      ? "bg-zinc-700/50 text-zinc-200"
+                      : "text-zinc-500 hover:text-zinc-400"
                   }`}
                 >
-                  <Edit3 className="w-4 h-4" />
+                  <TerminalIcon className="w-3 h-3" />
+                  Agent
                 </button>
-                {canFork && (
-                  <button
-                    onClick={handleFork}
-                    className="w-7 h-7 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-active transition-colors"
-                    title="Fork session"
+
+                {shellTabs.map((tab, i) => (
+                  <div
+                    key={tab.id}
+                    className={`flex items-center gap-0.5 px-2 py-1 text-xs whitespace-nowrap rounded transition-colors group cursor-pointer ${
+                      activeTerminalTab === tab.id
+                        ? "bg-zinc-700/50 text-zinc-200"
+                        : "text-zinc-500 hover:text-zinc-400"
+                    }`}
+                    onClick={() => setActiveTerminalTab(tab.id)}
                   >
-                    <GitFork className="w-4 h-4" />
+                    Shell {i + 1}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCloseShellTab(tab.id, tab.shellId);
+                      }}
+                      className="w-3.5 h-3.5 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-zinc-600 transition-all ml-0.5"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  onClick={handleNewShellTab}
+                  className="flex items-center justify-center w-6 h-6 text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0"
+                  title="New Terminal"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Right-side buttons */}
+              <div className="flex items-center gap-0.5 flex-shrink-0">
+                <button
+                  onClick={() => setTerminalMaximized(m => !m)}
+                  className="w-7 h-7 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-active transition-colors"
+                  title={terminalMaximized ? "Restore" : "Maximize"}
+                >
+                  {terminalMaximized ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                </button>
+                {!terminalMaximized && (
+                  <button
+                    ref={menuButtonRef}
+                    onClick={() => setShowMenu(m => !m)}
+                    className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${
+                      showMenu
+                        ? "text-white bg-surface-active"
+                        : "text-zinc-500 hover:text-white hover:bg-surface-active"
+                    }`}
+                    title="More actions"
+                  >
+                    <MoreHorizontal className="w-4 h-4" />
                   </button>
                 )}
                 <button
-                  onClick={async () => {
-                    if (selectedNodeId) {
-                      if (showArchived) {
-                        await unarchiveSession(selectedNodeId);
-                      } else {
-                        await archiveSession(selectedNodeId);
-                      }
-                      handleClose();
-                    }
-                  }}
-                  className="w-7 h-7 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-active transition-colors"
-                  title={showArchived ? "Unarchive" : "Archive"}
-                >
-                  <Archive className="w-4 h-4" />
-                </button>
-                <button
                   onClick={handleClose}
                   className="w-7 h-7 rounded flex items-center justify-center text-zinc-500 hover:text-white hover:bg-surface-active transition-colors"
+                  title="Close panel"
                 >
-                  <X className="w-4 h-4" />
+                  <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
           </div>
 
           {/* Disconnected banner */}
-          {isDisconnected && (
+          {isDisconnected && !terminalMaximized && (
             <div className="flex-shrink-0 px-4 py-3 bg-red-500/10 border-b border-red-500/20">
               <div className="space-y-3">
                 <div>
@@ -288,8 +536,17 @@ export function Sidebar() {
                             // Resuming from archived view — reload to show on active canvas
                             window.location.reload();
                           } else {
-                            // Force terminal recreation
-                            setTerminalKey(k => k + 1);
+                            // Force terminal refresh for the resumed session
+                            const terminalId = `agent:${session.sessionId}`;
+                            removeMountedTerminal(terminalId);
+                            requestAnimationFrame(() => {
+                              upsertMountedTerminal({
+                                id: terminalId,
+                                sessionId: session.sessionId,
+                                nodeId: selectedNodeId!,
+                                color: displayColor,
+                              });
+                            });
                             updateSession(selectedNodeId!, { status: "running", isRestored: false });
                           }
                         } else {
@@ -315,22 +572,9 @@ export function Sidebar() {
             </div>
           )}
 
-          {/* Session Management Controls */}
-          {!isDisconnected && !isEditing && (
-            <div className="flex-shrink-0 px-4 py-2 border-b border-border">
-              <button
-                onClick={handleNewSession}
-                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-surface-active text-zinc-300 text-xs font-medium hover:bg-zinc-700 transition-colors"
-              >
-                <RotateCcw className="w-3 h-3" />
-                New Session
-              </button>
-            </div>
-          )}
-
           {/* Edit Panel */}
           <AnimatePresence>
-            {isEditing && (
+            {isEditing && !terminalMaximized && (
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1 }}
@@ -471,33 +715,19 @@ export function Sidebar() {
             )}
           </AnimatePresence>
 
-          {/* Terminal */}
+          {/* Terminal — pooled terminals swap DOM containers for instant switching */}
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="flex-shrink-0 px-4 py-2 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TerminalIcon className="w-3.5 h-3.5 text-zinc-500" />
-                <span className="text-xs text-zinc-500">Terminal</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="w-2.5 h-2.5 rounded-full bg-[#FF5F56]" />
-                <div className="w-2.5 h-2.5 rounded-full bg-[#FFBD2E]" />
-                <div className="w-2.5 h-2.5 rounded-full bg-[#27CA40]" />
-              </div>
-            </div>
-
             <div className="flex-1 min-h-0 bg-[#0d0d0d]">
-              <Terminal
-                key={`${session.sessionId}-${terminalKey}`}
-                sessionId={session.sessionId}
-                color={displayColor}
-                nodeId={selectedNodeId!}
+              <PooledTerminalMount
+                terminalId={activeTerminalId}
+                terminals={mountedTerminals}
               />
             </div>
 
           </div>
 
           {/* Details */}
-          <div className="flex-shrink-0 border-t border-border">
+          <div className={`flex-shrink-0 border-t border-border ${terminalMaximized ? "hidden" : ""}`}>
             <div className="p-4 space-y-2">
               {session.notes && !isEditing && (
                 <p className="text-xs text-zinc-400 italic mb-3 pb-3 border-b border-border">
@@ -511,13 +741,15 @@ export function Sidebar() {
                   {new Date(session.createdAt).toLocaleTimeString()}
                 </span>
               </div>
-              <div className="flex items-center gap-2 text-xs">
-                <Folder className="w-3 h-3 text-zinc-600 flex-shrink-0" />
-                <span className="text-zinc-500">Directory</span>
-                <span className="text-zinc-400 font-mono ml-auto truncate max-w-[180px]" title={session.cwd}>
-                  {session.cwd.split('/').slice(-2).join('/')}
-                </span>
-              </div>
+              {session.contextTokens != null && session.contextTokens > 0 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <Zap className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                  <span className="text-zinc-500">Context</span>
+                  <span className="text-zinc-400 font-mono ml-auto">
+                    {Math.round(session.contextTokens / 1_000)}K tokens
+                  </span>
+                </div>
+              )}
               {session.gitBranch && (
                 <div className="flex items-center gap-2 text-xs">
                   <GitBranch className="w-3 h-3 text-zinc-600 flex-shrink-0" />
@@ -533,6 +765,81 @@ export function Sidebar() {
       )}
     </AnimatePresence>
 
+    {/* More actions dropdown menu */}
+    {showMenu && !terminalMaximized && createPortal(
+      <>
+        <div className="fixed inset-0 z-[9998]" onClick={() => setShowMenu(false)} />
+        <div
+          className="fixed z-[9999] min-w-[160px] rounded-lg border shadow-xl py-1"
+          style={{
+            top: menuButtonRef.current
+              ? menuButtonRef.current.getBoundingClientRect().bottom + 4
+              : 0,
+            right: menuButtonRef.current
+              ? window.innerWidth - menuButtonRef.current.getBoundingClientRect().right
+              : 0,
+            backgroundColor: "#262626",
+            borderColor: "#333",
+          }}
+        >
+          {!isDisconnected && (
+            <button
+              onClick={() => { handleNewSession(); setShowMenu(false); }}
+              className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-white/5 flex items-center gap-2"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              New Session
+            </button>
+          )}
+          <button
+            onClick={() => { setIsEditing(!isEditing); setShowMenu(false); }}
+            className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-white/5 flex items-center gap-2"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            Edit
+          </button>
+          {canFork && (
+            <button
+              onClick={() => { handleFork(); setShowMenu(false); }}
+              className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-white/5 flex items-center gap-2"
+            >
+              <GitFork className="w-3.5 h-3.5" />
+              Fork
+            </button>
+          )}
+          {showArchived ? (
+            <button
+              onClick={() => {
+                if (selectedNodeId) {
+                  unarchiveSession(selectedNodeId);
+                  handleClose();
+                }
+                setShowMenu(false);
+              }}
+              className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-white/5 flex items-center gap-2"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              Unarchive
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (selectedNodeId) {
+                  setDeleteDialogOpen(true);
+                }
+                setShowMenu(false);
+              }}
+              className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-white/5 flex items-center gap-2"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
+            </button>
+          )}
+        </div>
+      </>,
+      document.body
+    )}
+
     {session && (
       <ForkDialog
         open={forkDialogOpen}
@@ -542,6 +849,21 @@ export function Sidebar() {
         parentIcon={(node?.data as any)?.icon || "sparkles"}
         parentCwd={session.cwd || ""}
         onConfirm={handleForkConfirm}
+      />
+    )}
+    {session && (
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        sessionId={session.sessionId}
+        sessionName={session.customName || session.agentName || "Agent"}
+        onConfirm={async (cleanup) => {
+          if (!selectedNodeId) return;
+          await deleteSessionWithCleanup(selectedNodeId, session.sessionId, cleanup);
+          setSelectedNodeId(null);
+          setDeleteDialogOpen(false);
+          handleClose();
+        }}
       />
     )}
     </>

@@ -6,6 +6,7 @@ import { AgentNodeCard } from "./AgentNodeCard";
 import { AgentNodeContextMenu } from "./AgentNodeContextMenu";
 import { useAgentNodeState } from "./useAgentNodeState";
 import { ForkDialog } from "../ForkDialog";
+import { DeleteConfirmDialog } from "../DeleteConfirmDialog";
 
 const iconMap: Record<string, any> = {
   sparkles: Sparkles,
@@ -41,12 +42,16 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
     contextMenu,
     handleContextMenu,
     handleDelete,
+    handleDeleteConfirm,
     handleFork,
     handleForkConfirm,
+    handleArchive,
     canFork,
     closeContextMenu,
     forkDialogOpen,
     setForkDialogOpen,
+    deleteDialogOpen,
+    setDeleteDialogOpen,
   } = useAgentNodeState(id, nodeData, session);
 
   const displayColor = session?.customColor || session?.color || nodeData.color || "#22C55E";
@@ -75,8 +80,12 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           ticketTitle={session?.ticketTitle}
           longRunningTool={longRunningTool}
           tokens={session?.tokens}
+          totalTokens={session?.totalTokens}
           model={session?.model}
+          command={session?.command}
           sleepEndTime={session?.sleepEndTime}
+          onArchive={handleArchive}
+          onDelete={handleDelete}
         />
       </motion.div>
 
@@ -86,6 +95,7 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           onClose={closeContextMenu}
           onDelete={handleDelete}
           onFork={handleFork}
+          onArchive={handleArchive}
           showFork={canFork}
         />
       )}
@@ -99,6 +109,16 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
         parentCwd={session?.cwd || ""}
         onConfirm={handleForkConfirm}
       />
+
+      {session && (
+        <DeleteConfirmDialog
+          open={deleteDialogOpen}
+          onClose={() => setDeleteDialogOpen(false)}
+          sessionId={session.sessionId}
+          sessionName={session.customName || session.agentName || nodeData.label || "Agent"}
+          onConfirm={handleDeleteConfirm}
+        />
+      )}
     </>
   );
 };
